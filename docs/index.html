@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FlOZE Clone — AI Character Roleplay</title>
+<meta name="description" content="An AI character roleplay app: stories that remember, characters that change, and scenes that unlock as you go.">
+<style>
+  :root{
+    --bg:#0d0b14; --panel:#161324; --panel2:#1e1a30; --line:#2b2542;
+    --ink:#e8e3f5; --dim:#9a92b8; --gold:#d8b46a; --rose:#c96a8a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif}
+  a{color:var(--rose)}
+  .wrap{max-width:760px;margin:0 auto;padding:0 22px}
+
+  header{padding:96px 0 64px;text-align:center;
+         background:radial-gradient(120% 90% at 50% 0%,#241b38 0%,var(--bg) 62%)}
+  .logo{font-size:44px;font-weight:700;letter-spacing:.16em;margin:0 0 14px;
+        background:linear-gradient(92deg,var(--gold),var(--rose));
+        -webkit-background-clip:text;background-clip:text;color:transparent}
+  .tagline{font-size:19px;color:var(--dim);margin:0 auto;max-width:520px}
+
+  section{padding:52px 0;border-top:1px solid var(--line)}
+  h2{font-size:22px;margin:0 0 22px;letter-spacing:.02em}
+
+  .feat{display:flex;gap:16px;margin-bottom:26px;align-items:flex-start}
+  .feat .ico{flex:0 0 auto;width:34px;height:34px;border-radius:9px;
+             display:flex;align-items:center;justify-content:center;font-size:17px;
+             background:var(--panel2);border:1px solid var(--line)}
+  .feat h3{margin:0 0 5px;font-size:16px}
+  .feat p{margin:0;color:var(--dim);font-size:14.5px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+  .grid img{width:100%;aspect-ratio:3/4;object-fit:cover;object-position:top;
+            border-radius:12px;border:1px solid var(--line);display:block}
+  .grid .name{font-size:12px;color:var(--dim);text-align:center;margin-top:7px}
+
+  .stack{display:flex;flex-wrap:wrap;gap:8px}
+  .stack span{font-size:12.5px;padding:5px 12px;border-radius:20px;
+              background:var(--panel2);border:1px solid var(--line);color:var(--dim)}
+
+  footer{padding:44px 0 72px;border-top:1px solid var(--line);
+         color:var(--dim);font-size:13.5px}
+  footer a{color:var(--dim);text-decoration:none;margin-right:20px}
+  footer a:hover{color:var(--rose)}
+  .meta{color:#6f6885;font-size:12.5px;margin-top:18px;line-height:1.9}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1 class="logo">FLOZE</h1>
+    <p class="tagline">Stories that remember. Characters that change.<br>Scenes that unlock as you go.</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section id="about">
+    <h2>What it is</h2>
+    <p style="color:var(--dim);margin:0">
+      An AI character roleplay app. Every character carries their own voice, history and
+      opening scene. Conversations accumulate — a character who distrusted you in chapter one
+      may hand you an apple by chapter five, and side stories unlock once your bond is deep enough.
+    </p>
+  </section>
+
+  <section id="features">
+    <h2>What's inside</h2>
+
+    <div class="feat">
+      <div class="ico">✦</div>
+      <div>
+        <h3>Characters with a point of view</h3>
+        <p>Five identities, ten personality traits, a three-thousand-character background, and
+           an opening line that sets the scene. Each one speaks in their own register.</p>
+      </div>
+    </div>
+
+    <div class="feat">
+      <div class="ico">◈</div>
+      <div>
+        <h3>Memory that holds</h3>
+        <p>A memories panel for the details that matter — what they call you, what you told them,
+           what they should never forget. A chat diary summarises the plot so far, so nothing
+           important falls out of context.</p>
+      </div>
+    </div>
+
+    <div class="feat">
+      <div class="ico">❖</div>
+      <div>
+        <h3>Bonds and hidden chapters</h3>
+        <p>Affinity drifts with the emotional current of a conversation. Cross a threshold and
+           side stories open — spoiler-free until you earn them, synced back into your memory
+           once you've played them.</p>
+      </div>
+    </div>
+
+    <div class="feat">
+      <div class="ico">♪</div>
+      <div>
+        <h3>They say it out loud</h3>
+        <p>Every character has an individual voice. Tap to hear a line spoken — stage directions
+           are stripped out before synthesis, so you hear dialogue, not narration.</p>
+      </div>
+    </div>
+
+    <div class="feat">
+      <div class="ico">◎</div>
+      <div>
+        <h3>Rooms, scenes, moments</h3>
+        <p>Open World mode for building your own setting. Scenarios, a moments feed, shared
+           albums, quests and achievements — the parts you'd expect, done properly.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="cast">
+    <h2>The starting cast</h2>
+    <div class="grid">
+      <div><img src="assets/portrait-lucien.jpeg" alt="Lucien"><div class="name">Lucien</div></div>
+      <div><img src="assets/portrait-seraphine.jpeg" alt="Seraphine"><div class="name">Seraphine</div></div>
+      <div><img src="assets/portrait-ilias.jpeg" alt="Ilias"><div class="name">Ilias</div></div>
+      <div><img src="assets/portrait-nyx.jpeg" alt="Nyx"><div class="name">Nyx</div></div>
+      <div><img src="assets/portrait-isolde.jpeg" alt="Isolde"><div class="name">Isolde</div></div>
+      <div><img src="assets/portrait-rook.jpeg" alt="Rook"><div class="name">Rook</div></div>
+    </div>
+  </section>
+
+  <section id="tech">
+    <h2>How it's built</h2>
+    <div class="stack">
+      <span>Python (standard library only)</span>
+      <span>SQLite</span>
+      <span>Vanilla JS + CSS</span>
+      <span>Server-sent events</span>
+      <span>Android WebView</span>
+      <span>Direct SDK toolchain build</span>
+      <span>MiniMax-M3</span>
+      <span>Speech synthesis</span>
+      <span>Image generation</span>
+    </div>
+    <p style="color:var(--dim);font-size:14.5px;margin-top:20px">
+      No frontend framework, no build step, no web server framework. The service runs from a
+      single Python file; the interface is one HTML document. See the
+      <a href="https://github.com/[GITHUB_USER]/[REPO_NAME]">repository</a> for the architecture notes.
+    </p>
+  </section>
+
+  <section id="legal" style="border-top:1px solid var(--line)">
+    <h2>Legal</h2>
+    <p style="color:var(--dim);margin:0 0 14px">
+      This application is intended for adult users. Content may include mature themes,
+      romantic and suggestive material.
+    </p>
+    <p style="margin:0">
+      <a href="privacy.html">Privacy Policy</a> &nbsp;·&nbsp;
+      <a href="terms.html">Terms of Service</a>
+    </p>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="mailto:[CONTACT EMAIL]">Contact</a>
+    <div class="meta">
+      FlOZE Clone is an independent project.<br>
+      © <span id="yr"></span> All rights reserved.
+    </div>
+  </div>
+</footer>
+
+<script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
+</body>
+</html>
