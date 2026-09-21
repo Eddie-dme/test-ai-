@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.floze.clone'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.floze.clone"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+
+        // ★ 测试服务器地址：改成你跑 server.py 那台机器的局域网 IP
+        //   可在 App 内长按标题栏临时修改（不重打包）
+        buildConfigField "String", "SERVER_URL", "\"http://192.168.71.82:8080\""
+    }
+
+    buildTypes {
+        debug {
+            // 测试包：不做混淆，方便看日志
+            minifyEnabled false
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            // 未配签名时会生成未签名包，仅用于内部测试
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // 无第三方依赖：只用 Android 系统自带的 WebView
+}

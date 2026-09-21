@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Floze Clone · Romantasy AI Chat</title>
+<style>
+  :root{
+    --bg:#0d0b14; --panel:#161324; --panel2:#1e1a30; --line:#2b2542;
+    --ink:#e8e3f5; --dim:#9a92b8; --gold:#d8b46a; --rose:#c96a8a; --ok:#6ac9a0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.55 -apple-system,"SF Pro Text","PingFang SC",sans-serif;
+       background:var(--bg);color:var(--ink);height:100vh;height:100dvh;overflow:hidden}
+  .app{display:grid;grid-template-columns:260px 1fr;height:100vh;height:100dvh}
+
+  /* ---- 侧栏 ---- */
+  aside{background:var(--panel);border-right:1px solid var(--line);
+        display:flex;flex-direction:column;overflow:hidden}
+  .brand{padding:16px;border-bottom:1px solid var(--line)}
+  .brand h1{margin:0;font-size:16px;letter-spacing:.5px}
+  .brand p{margin:2px 0 0;font-size:11px;color:var(--dim)}
+  .wallet{padding:10px 16px;border-bottom:1px solid var(--line);font-size:12px;
+          display:flex;justify-content:space-between;align-items:center}
+  .wallet b{color:var(--gold);font-size:15px}
+  .tab{display:flex;border-bottom:1px solid var(--line)}
+  .tab button{flex:1;padding:9px;background:none;border:0;color:var(--dim);
+              cursor:pointer;font-size:12px}
+  .tab button.on{color:var(--ink);border-bottom:2px solid var(--rose)}
+  .list{overflow-y:auto;flex:1}
+  .item{padding:11px 16px;border-bottom:1px solid rgba(43,37,66,.5);cursor:pointer;
+        display:flex;gap:10px;align-items:flex-start}
+  .item:hover{background:var(--panel2)}
+  .item.on{background:var(--panel2);border-left:2px solid var(--rose)}
+  .item img.face{width:44px;height:58px;object-fit:cover;object-position:top;
+        border-radius:6px;border:1px solid var(--line);flex:0 0 auto;background:var(--panel2)}
+  .item .n{font-weight:600;font-size:13px}
+  .item .d{font-size:11px;color:var(--dim);margin-top:2px;
+           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tags{margin-top:5px;display:flex;gap:4px;flex-wrap:wrap}
+  .tags span{font-size:10px;padding:1px 6px;border-radius:8px;
+             background:rgba(201,106,138,.16);color:var(--rose)}
+
+  /* ---- 主区 ---- */
+  main{display:flex;flex-direction:column;overflow:hidden}
+  .top{padding:12px 18px;border-bottom:1px solid var(--line);
+       display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .top .who{font-weight:600}
+  .top .sub{font-size:11px;color:var(--dim)}
+
+  /* ---- 立绘动效（纯 CSS，无需额外资材）---- */
+  #heroFace{position:absolute;right:0;top:0;height:100%;width:auto;max-height:130px;
+        object-fit:cover;object-position:top;opacity:.6;
+        -webkit-mask-image:linear-gradient(90deg,transparent,#000 45%);
+        mask-image:linear-gradient(90deg,transparent,#000 45%);pointer-events:none;
+        will-change:transform,opacity;
+        /* 呼吸：极缓慢的缩放，模拟角色“活着” */
+        animation:breathe 6s ease-in-out infinite;}
+  @keyframes breathe{
+    0%,100%{transform:scale(1) translateY(0)}
+    50%    {transform:scale(1.022) translateY(-2px)}
+  }
+  /* 光晕扫过：像烛光拂过脸面 */
+  .top::after{content:'';position:absolute;inset:0;pointer-events:none;
+        background:linear-gradient(105deg,transparent 35%,rgba(216,180,106,.10) 50%,transparent 65%);
+        background-size:250% 100%;animation:sheen 9s ease-in-out infinite}
+  @keyframes sheen{
+    0%,100%{background-position:150% 0}
+    50%    {background-position:-50% 0}
+  }
+  .top{position:relative;overflow:hidden}
+
+  /* 列表缩略图：hover 微动 + 呼吸错峰（避免整列同时动，看着假）*/
+  .item img.face{transition:transform .35s ease, box-shadow .35s ease;
+        animation:breathe 7s ease-in-out infinite}
+  .item:hover img.face{transform:scale(1.06) translateY(-1px);
+        box-shadow:0 4px 18px rgba(201,106,138,.35)}
+  .item:nth-child(2n) img.face{animation-delay:-2.3s}
+  .item:nth-child(3n) img.face{animation-delay:-4.1s}
+  .item:nth-child(5n) img.face{animation-delay:-1.2s}
+
+  /* 无障碍：尊重系统的“减少动态效果”设置 */
+  @media (prefers-reduced-motion: reduce){
+    #heroFace,.item img.face,.top::after{animation:none !important}
+  }
+  select{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+         border-radius:6px;padding:5px 8px;font-size:12px}
+  .chat{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:14px}
+  .empty{margin:auto;text-align:center;color:var(--dim);font-size:13px}
+
+  .msg{max-width:78%;padding:10px 14px;border-radius:12px;white-space:pre-wrap;
+       word-break:break-word}
+  .msg.user{align-self:flex-end;background:var(--panel2);border:1px solid var(--line)}
+  .msg.ai{align-self:flex-start;background:linear-gradient(180deg,#1c1730,#171327);
+          border:1px solid #2e2748}
+  .msg .status{display:block;margin-top:7px;font-size:10.5px;color:var(--dim);
+               font-style:normal}
+
+  /* ---- 语音播放 ---- */
+  .msg .say{display:inline-flex;align-items:center;gap:5px;margin-top:8px;
+        font-size:11px;color:var(--dim);cursor:pointer;user-select:none;
+        border:1px solid var(--line);border-radius:12px;padding:3px 10px;
+        background:rgba(255,255,255,.02);transition:.2s}
+  .msg .say:hover{color:var(--rose);border-color:var(--rose)}
+  .msg .say.playing{color:var(--rose);border-color:var(--rose)}
+  .msg .say.loading{color:var(--gold);border-color:var(--gold);cursor:wait}
+  .msg .say .dot{width:6px;height:6px;border-radius:50%;background:currentColor;
+        animation:pulse 1s ease-in-out infinite}
+  @media (prefers-reduced-motion: reduce){ .msg .say .dot{animation:none} }
+  @keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+
+  .composer{border-top:1px solid var(--line);padding:12px 18px;background:var(--panel)}
+  .row{display:flex;gap:8px;align-items:flex-end}
+  textarea{flex:1;resize:none;height:56px;background:var(--panel2);color:var(--ink);
+           border:1px solid var(--line);border-radius:10px;padding:9px 11px;
+           font:inherit;outline:none}
+  textarea:focus{border-color:var(--rose)}
+  button.act{background:var(--rose);border:0;color:#fff;border-radius:10px;
+             padding:0 18px;height:56px;cursor:pointer;font-size:13px;font-weight:600}
+  button.act:disabled{opacity:.45;cursor:not-allowed}
+  button.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+               border-radius:8px;padding:6px 11px;cursor:pointer;font-size:12px}
+  .hint{font-size:11px;color:var(--dim);margin-top:7px;display:flex;
+        justify-content:space-between;align-items:center;gap:10px}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+         background:#2a2340;border:1px solid var(--line);padding:9px 16px;
+         border-radius:20px;font-size:12px;opacity:0;transition:.25s;pointer-events:none}
+  .toast.on{opacity:1}
+  .spinner{width:11px;height:11px;border:2px solid var(--dim);border-top-color:var(--rose);
+           border-radius:50%;display:inline-block;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ---- 广场（动态流） ---- */
+  .card{background:linear-gradient(180deg,#1a1630,#161327);border:1px solid #2b2542;
+        border-radius:12px;padding:14px 16px;max-width:620px;width:100%}
+  .card .meta{font-size:11px;color:var(--dim);margin-bottom:7px;display:flex;
+              gap:8px;align-items:center}
+  .card .body{white-space:pre-wrap;line-height:1.6}
+  .card .acts{margin-top:11px;display:flex;gap:14px;font-size:12px;color:var(--dim)}
+  .card .acts span{cursor:pointer}
+  .card .acts span:hover{color:var(--rose)}
+  .card .acts span.on{color:var(--rose);font-weight:600}
+  .card .cmt{margin-top:9px;padding-top:9px;border-top:1px solid var(--line);
+             font-size:12px;color:var(--dim);white-space:pre-wrap}
+
+  /* ---- 章节 ---- */
+  .ch{background:linear-gradient(180deg,#1a1630,#161327);border:1px solid #2b2542;
+      border-radius:12px;padding:13px 15px;max-width:620px;width:100%}
+  .ch.locked{opacity:.62}
+  .ch .h{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .ch .t{font-weight:600;font-size:13.5px}
+  .ch .th{font-size:11px;color:var(--dim);white-space:nowrap}
+  .ch .intro{font-size:12px;color:var(--dim);margin-top:5px;font-style:italic}
+  .ch .body{margin-top:10px;font-size:13px;white-space:pre-wrap;line-height:1.65;
+            padding-top:9px;border-top:1px solid var(--line)}
+  .pill{font-size:10px;padding:1px 7px;border-radius:9px;margin-left:6px}
+  .pill.pos{background:rgba(106,201,160,.18);color:var(--ok)}
+  .pill.neg{background:rgba(201,106,138,.18);color:var(--rose)}
+  .affbar{height:5px;border-radius:3px;background:var(--panel2);overflow:hidden;
+          max-width:620px;width:100%;margin-top:4px}
+  .affbar i{display:block;height:100%;background:linear-gradient(90deg,var(--rose),var(--gold))}
+
+  /* ---- 角色创建表单 ---- */
+  .form{max-width:620px;width:100%;background:linear-gradient(180deg,#1a1630,#161327);
+        border:1px solid #2b2542;border-radius:12px;padding:16px 18px}
+  .form h3{margin:0 0 4px;font-size:15px}
+  .form .note{font-size:11px;color:var(--dim);margin-bottom:14px}
+  .form label{display:block;font-size:11px;color:var(--gold);margin:11px 0 4px;
+        letter-spacing:.04em}
+  .form input,.form textarea{width:100%;background:var(--panel2);color:var(--ink);
+        border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+        font:inherit;font-size:12.5px;outline:none}
+  .form input:focus,.form textarea:focus{border-color:var(--rose)}
+  .form textarea{resize:vertical}
+  .form .counter{float:right;font-size:10px;color:var(--dim);font-weight:400}
+  .form .counter.over{color:var(--rose)}
+  .form .actions{margin-top:16px;display:flex;gap:8px}
+  .detail{max-width:680px;width:100%;display:flex;gap:18px;align-items:flex-start}
+  .detail .portrait{width:210px;flex:0 0 auto;border-radius:12px;
+        border:1px solid var(--line);display:block}
+  .detail .info{flex:1;min-width:0}
+  .detail h2{margin:0 0 4px;font-size:19px}
+  .detail .desc{font-size:12.5px;color:var(--dim);margin-bottom:12px}
+  .detail .sec{margin-top:12px}
+  .detail .sec h4{margin:0 0 5px;font-size:11px;letter-spacing:.06em;
+        text-transform:uppercase;color:var(--gold)}
+  .detail .sec p{margin:0;font-size:12.5px;line-height:1.65;color:#cdc6e0}
+  .detail .firstmsg{font-size:12.5px;line-height:1.65;color:#cdc6e0;
+        background:var(--panel2);border-left:2px solid var(--rose);
+        padding:10px 12px;border-radius:0 8px 8px 0;white-space:pre-wrap}
+  .detail .statusbar{font-size:11.5px;color:var(--gold);margin-top:10px;
+        background:rgba(216,180,106,.08);padding:7px 11px;border-radius:7px}
+  @media (max-width:640px){
+    .detail{flex-direction:column} .detail .portrait{width:170px;margin:0 auto}
+  }
+
+  /* ---- 移动端适配（手机浏览器 / WebView）----
+     桌面为「260px 侧栏 + 主区」双栏；窄屏收成单栏，
+     侧栏移入抽屉，由左上角 ☰ 唤出，避免两栏硬挤成一屏两页。 */
+  .menu{display:none}
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:69;
+         opacity:0;pointer-events:none;transition:opacity .26s}
+  @media (max-width:820px){
+    .app{grid-template-columns:1fr}
+    aside{position:fixed;top:0;bottom:0;left:0;width:286px;max-width:86vw;z-index:70;
+          transform:translateX(-100%);
+          transition:transform .26s cubic-bezier(.4,0,.2,1);
+          box-shadow:0 0 44px rgba(0,0,0,.66)}
+    body.nav-open aside{transform:translateX(0)}
+    body.nav-open .scrim{opacity:1;pointer-events:auto}
+    .menu{display:inline-flex;align-items:center;justify-content:center;
+          width:38px;height:38px;flex:0 0 auto;padding:0;font-size:17px;line-height:1;
+          background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+          color:var(--ink);cursor:pointer;position:relative;z-index:1}
+    .top{padding:10px 12px;flex-wrap:wrap;gap:8px}
+    #chatTools{flex-wrap:wrap;gap:6px;justify-content:flex-end}
+    #chatTools .ghost{padding:5px 9px;font-size:11.5px}
+    #chatTools select{font-size:11.5px;padding:5px 7px}
+    #heroFace{max-height:96px;opacity:.42}
+    .chat{padding:13px}
+    .msg{max-width:88%}
+    .list .item{padding:12px 14px}
+    .composer{padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+    /* toast 上移，避免盖住 composer 的消耗/额度提示 */
+    .toast{bottom:calc(96px + env(safe-area-inset-bottom))}
+    .form,.gen,.card,.ch,.grid,.detail,.affbar{max-width:none}
+  }
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+        gap:10px;max-width:760px;width:100%}
+  .grid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;
+            border:1px solid var(--line);display:block;transition:transform .3s ease}
+  .grid .cell:hover img{transform:scale(1.04)}
+  .grid .cell{position:relative;overflow:hidden;border-radius:10px}
+  .grid .cell .tag{position:absolute;left:6px;bottom:6px;font-size:10px;
+        background:rgba(0,0,0,.6);padding:1px 6px;border-radius:8px;color:var(--dim)}
+  .gen{background:linear-gradient(180deg,#1a1630,#161327);border:1px solid #2b2542;
+       border-radius:12px;padding:13px 15px;max-width:620px;width:100%}
+  .gen textarea{width:100%;height:52px;background:var(--panel2);color:var(--ink);
+      border:1px solid var(--line);border-radius:9px;padding:8px 10px;font:inherit;font-size:12.5px}
+  .gen .row2{display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap}
+  .busy{display:inline-block;width:12px;height:12px;border:2px solid var(--dim);
+        border-top-color:var(--rose);border-radius:50%;animation:spin .8s linear infinite}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand">
+      <h1>Floze <span style="color:var(--rose)">Clone</span></h1>
+      <p>Romantasy AI Chat · 1:1 复刻</p>
+      <p id="apiHint" style="margin-top:4px;font-size:10px;color:var(--dim)"></p>
+    </div>
+    <div class="wallet">
+      <span>💖 Hearts</span><b id="hearts">–</b>
+    </div>
+    <div class="tab">
+      <button id="tabRoles" class="on">角色</button>
+      <button id="tabRooms">会话</button>
+      <button id="tabFeed">动态</button>
+      <button id="tabScen">情景</button>
+      <button id="tabAlbum">相册</button>
+    </div>
+    <div class="list" id="list"></div>
+  </aside>
+
+  <main>
+    <div class="top">
+      <button class="menu" id="btnMenu" aria-label="打开列表">☰</button>
+      <img id="heroFace" style="display:none" alt="">
+      <div style="position:relative;z-index:1">
+        <div class="who" id="who">选择一个角色开始</div>
+        <div class="sub" id="sub"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;position:relative;z-index:1" id="chatTools">
+        <span id="affBadge" title="好感度"
+              style="font-size:11px;color:var(--gold);white-space:nowrap"></span>
+        <select id="modeSel" title="聊天模式（对应 /chatMode 档位）"></select>
+        <button class="ghost" id="btnChapters" title="隐藏章节">📖 章节</button>
+        <button class="ghost" id="btnAd" title="看广告换 hearts">📺 广告</button>
+        <button class="ghost" id="btnMem" title="生成记忆摘要">🧠 记忆</button>
+      </div>
+    </div>
+
+    <!-- 聊天视图 -->
+    <div class="chat" id="chat">
+      <div class="empty">从左侧选一个角色，点击「开始对话」</div>
+    </div>
+
+    <!-- 广场视图（动态流） -->
+    <div class="chat" id="feed" style="display:none"></div>
+
+    <div class="composer" id="composer">
+      <div class="row">
+        <textarea id="input" placeholder="说点什么…（Enter 发送 / Shift+Enter 换行）"></textarea>
+        <button class="act" id="send">发送</button>
+      </div>
+      <div class="hint">
+        <span id="cost">本次消耗：– 💖</span>
+        <span id="adInfo"></span>
+      </div>
+    </div>
+  </main>
+</div>
+<div class="scrim" id="scrim"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+/* API 地址解析 —— 三种方式，按优先级：
+ *   1. URL 参数：  http://host/page?api=http://192.168.1.10:8080
+ *   2. 全局注入：  window.__FLOZE_API__ = 'http://192.168.1.10:8080'
+ *   3. 同源（默认，前后端同机时用）
+ * 打包成 App / WebView 嵌入时用前两种。
+ */
+const API_BASE = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get('api');
+    if (q) return q.replace(/\/$/, '');
+  } catch (e) {}
+  if (window.__FLOZE_API__) return String(window.__FLOZE_API__).replace(/\/$/, '');
+  return '';                       // 同源
+})();
+
+let state = { roles: [], rooms: [], modes: [], chatroom: null, role: null,
+              tab: 'roles', sending: false };
+
+async function api(path, opts) {
+  const r = await fetch(API_BASE + path, opts);
+  return r.json();
+}
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2200);
+}
+function currentMode() {
+  return state.modes.find(m => m.id === $('#modeSel').value);
+}
+
+/* ---------- 侧栏渲染 ---------- */
+/* ---------- 角色创建（Creator Studio 侧）---------- */
+function openRoleForm() {
+  const box = $('#chat');
+  box.innerHTML = '';
+  const f = document.createElement('div');
+  f.className = 'form';
+  f.innerHTML = `<h3>创建角色</h3>
+    <div class="note">字段限制对齐官方：名称 30 字 · 背景 3000 字 · 开场白 1000 字 · 标签 20 个</div>
+
+    <label>名字 <span class="counter" id="cName">0/30</span></label>
+    <input id="fName" maxlength="30" placeholder="如 Vivienne">
+
+    <label>一句话描述</label>
+    <input id="fDesc" placeholder="如 A ghost bound to a stopped clock.">
+
+    <label>性格（用逗号分隔的标签）</label>
+    <input id="fPers" placeholder="如 Spectral, tender, trapped in time">
+
+    <label>背景故事 <span class="counter" id="cBg">0/3000</span></label>
+    <textarea id="fBg" rows="4" maxlength="3000"
+      placeholder="TA 的过去、执念、秘密…"></textarea>
+
+    <label>开场白 <span class="counter" id="cFm">0/1000</span></label>
+    <textarea id="fFm" rows="3" maxlength="1000"
+      placeholder="*动作描写* 第一句话"></textarea>
+
+    <label>状态栏（可选，每句话末尾显示）</label>
+    <input id="fSb" placeholder="如 📍 Moonlit Hall | 💖 Affection: 5%">
+
+    <label>标签 <span class="counter" id="cTags">0/20</span></label>
+    <input id="fTags" placeholder="如 ghost, tragic, romantasy（逗号分隔）">
+
+    <div class="actions">
+      <button class="act" style="height:36px" id="fSubmit">创建</button>
+      <button class="ghost" id="fCancel">取消</button>
+    </div>`;
+  box.appendChild(f);
+
+  const bind = (id, counterId, limit) => {
+    const el = f.querySelector('#' + id), c = f.querySelector('#' + counterId);
+    const upd = () => {
+      const n = el.value.length;
+      c.textContent = `${n}/${limit}`;
+      c.classList.toggle('over', n > limit);
+    };
+    el.addEventListener('input', upd); upd();
+  };
+  bind('fName', 'cName', 30);
+  bind('fBg', 'cBg', 3000);
+  bind('fFm', 'cFm', 1000);
+
+  f.querySelector('#fCancel').onclick = () => switchTab('roles');
+  f.querySelector('#fSubmit').onclick = async () => {
+    const name = f.querySelector('#fName').value.trim();
+    if (!name) return toast('名字必填');
+    const tagsRaw = f.querySelector('#fTags').value.trim();
+    const tags = tagsRaw ? tagsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+    if (tags.length > 20) return toast('标签最多 20 个');
+
+    const r = await api('/api/role/create', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        name,
+        description: f.querySelector('#fDesc').value.trim(),
+        personality: f.querySelector('#fPers').value.trim(),
+        background:  f.querySelector('#fBg').value,
+        firstMessage: f.querySelector('#fFm').value,
+        statusBar:   f.querySelector('#fSb').value.trim(),
+        tags,
+      })
+    });
+    if (r.flag !== 0) return toast('创建失败：' + r.msg);
+    toast(`已创建《${r.data.name}》`);
+    await refreshRoles();
+    switchTab('roles');
+  };
+}
+
+async function refreshRoles() {
+  const r = await api('/api/role/list');
+  if (r.flag === 0) state.roles = r.data || [];
+}
+
+async function renderRoleDetail(role) {
+  const box = $('#chat');
+  box.innerHTML = '';
+  const d = await api('/api/role/' + role.id);
+  const r = (d.flag === 0 && d.data) ? d.data : role;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'detail';
+  const face = `${API_BASE}/generated/portrait-${r.name.toLowerCase()}.jpeg`;
+  wrap.innerHTML = `
+    <img class="portrait" src="${face}" alt="${r.name}"
+         onerror="this.style.visibility='hidden'">
+    <div class="info">
+      <h2>${r.name}</h2>
+      <div class="desc">${r.description || ''}</div>
+      <div class="tags">${(r.tags||[]).map(t=>`<span>${t}</span>`).join('')}</div>
+      ${r.personality ? `<div class="sec"><h4>Personality</h4><p>${r.personality}</p></div>` : ''}
+      ${r.background ? `<div class="sec"><h4>Background</h4><p>${r.background}</p></div>` : ''}
+      ${r.first_message ? `<div class="sec"><h4>Opening</h4>
+        <div class="firstmsg">${r.first_message}</div></div>` : ''}
+      ${r.status_bar ? `<div class="statusbar">${r.status_bar}</div>` : ''}
+      <div class="sec" style="display:flex;gap:8px;margin-top:16px">
+        <button class="act" style="height:36px" id="dStart">开始对话</button>
+        <button class="ghost" id="dChapters">📖 查看章节</button>
+      </div>
+    </div>`;
+  box.appendChild(wrap);
+
+  $('#who').textContent = r.name;
+  $('#sub').textContent = r.personality || '';
+  setHero(r.name);
+
+  wrap.querySelector('#dStart').onclick = () => startChat(r);
+  wrap.querySelector('#dChapters').onclick = () => {
+    state.role = r;
+    state.tab = 'chapters';
+    switchTab('chapters');
+  };
+}
+
+function renderList() {
+  const l = $('#list'); l.innerHTML = '';
+  if (state.tab === 'roles') {
+    // 创建入口
+    const add = document.createElement('div');
+    add.className = 'item';
+    add.style.cssText = 'color:var(--rose);font-size:13px;padding:12px 16px';
+    add.textContent = '+ 创建角色';
+    add.onclick = () => { navOpen(false); openRoleForm(); };
+    l.appendChild(add);
+
+    state.roles.forEach(r => {
+      const d = document.createElement('div');
+      d.className = 'item';
+      // 立绘：约定文件名 portrait-<name>.jpeg，缺失时自动隐藏
+      const face = `${API_BASE}/generated/portrait-${r.name.toLowerCase()}.jpeg`;
+      d.innerHTML = `<img class="face" src="${face}" alt="${r.name}"
+          loading="lazy" onerror="this.style.display='none'">
+        <div style="min-width:0;flex:1">
+          <div class="n">${r.name}</div>
+          <div class="d">${r.description}</div>
+          <div class="tags">${(r.tags||[]).slice(0,3).map(t=>`<span>${t}</span>`).join('')}</div>
+        </div>`;
+      d.onclick = () => { navOpen(false); renderRoleDetail(r); };
+      l.appendChild(d);
+    });
+  } else {
+    if (!state.rooms.length) { l.innerHTML = '<div class="empty">还没有会话</div>'; return; }
+    state.rooms.forEach(c => {
+      const d = document.createElement('div');
+      d.className = 'item' + (state.chatroom && state.chatroom.id === c.id ? ' on' : '');
+      d.innerHTML = `<div class="n">${c.role_name}</div>
+        <div class="d">${c.chat_mode} · ${new Date(c.updated_at*1000).toLocaleString()}</div>`;
+      d.onclick = () => { navOpen(false); openRoom(c); };
+      l.appendChild(d);
+    });
+  }
+}
+
+/* ---------- 开始 / 打开会话 ---------- */
+async function startChat(role) {
+  const mode = $('#modeSel').value || 'classic';
+  const res = await api('/api/chatroom', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ roleId: role.id, chatMode: mode })
+  });
+  if (res.flag !== 0) return toast('创建会话失败：' + res.msg);
+  state.role = role;
+  state.chatroom = { id: res.data.id, chat_mode: mode, role_id: role.id };
+  $('#who').textContent = role.name;
+  $('#sub').textContent = role.personality || '';
+  setHero(role.name);
+  await refreshRooms();
+  await loadMessages();
+  await refreshAffinity();
+  state.tab = 'rooms'; switchTab('rooms');
+}
+
+function setHero(roleName) {
+  const el = $('#heroFace');
+  if (!roleName) { el.style.display = 'none'; return; }
+  const url = `${API_BASE}/generated/portrait-${roleName.toLowerCase()}.jpeg`;
+  el.onerror = () => { el.style.display = 'none'; };
+  el.onload = () => { el.style.display = 'block'; };
+  el.src = url;
+}
+
+function openRoom(c) {
+  state.chatroom = c;
+  state.role = state.roles.find(r => r.id === c.role_id);
+  $('#who').textContent = c.role_name;
+  $('#sub').textContent = state.role ? (state.role.personality||'') : '';
+  setHero(c.role_name);
+  $('#modeSel').value = c.chat_mode;
+  updateCost();
+  loadMessages();
+  refreshAffinity();
+  renderList();
+}
+
+async function loadMessages() {
+  if (!state.chatroom) return;
+  const res = await api('/api/message/list?chatroomId=' + state.chatroom.id);
+  const box = $('#chat'); box.innerHTML = '';
+  (res.data || []).forEach(m => {
+    const el = appendMsg(m.speaker === 'user' ? 'user' : 'ai',
+      m.content,
+      m.heart_cost ? `−${m.heart_cost} 💖` : (m.is_ad_funded ? '📺 广告抵扣' : ''));
+    el.dataset.id = m.id;
+    const btn = el.querySelector('.say');
+    if (btn) btn.onclick = (e) => { e.stopPropagation(); playSpeech(m.id, btn); };
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+function appendMsg(kind, text, status) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + kind;
+  d.textContent = text;
+  if (status) {
+    const s = document.createElement('em'); s.className = 'status'; s.textContent = status;
+    d.appendChild(s);
+  }
+  // 角色消息加「朗读」按钮（动作描写会被自动剔除，不朗读）
+  if (kind === 'ai' && text && text.trim()) {
+    const btn = document.createElement('span');
+    btn.className = 'say';
+    btn.textContent = '🔊 朗读';
+    if (d.dataset.id) btn.dataset.mid = d.dataset.id;
+    d.appendChild(btn);
+  }
+  $('#chat').appendChild(d);
+  $('#chat').scrollTop = $('#chat').scrollHeight;
+  return d;
+}
+
+/* ---------- 发送（SSE 流式） ---------- */
+async function send() {
+  if (state.sending) return;
+  const text = $('#input').value.trim();
+  if (!text) return;
+  if (!state.chatroom) return toast('请先选择一个角色');
+
+  state.sending = true; $('#send').disabled = true;
+  appendMsg('user', text);
+  $('#input').value = '';
+
+  const bubble = appendMsg('ai', '');
+  bubble.innerHTML = '<span class="spinner"></span>';
+  let acc = '';
+
+  try {
+    const resp = await fetch(API_BASE + '/api/message/send', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ chatroomId: state.chatroom.id, text })
+    });
+    if (resp.headers.get('content-type')?.includes('application/json')) {
+      const j = await resp.json();
+      bubble.textContent = '';
+      toast(j.msg === 'NOT_ENOUGH_HEARTS' ? 'Hearts 不足，点右上「📺 广告」补充' : ('发送失败：' + j.msg));
+      state.sending = false; $('#send').disabled = false; return;
+    }
+    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split('\n\n'); buf = parts.pop();
+      for (const p of parts) {
+        const line = p.split('\n').find(l => l.startsWith('data:'));
+        if (!line) continue;
+        const evt = JSON.parse(line.slice(5).trim());
+        if (evt.event === 'meta') {
+          if (evt.heartInfo) $('#hearts').textContent = evt.heartInfo.amount;
+          bubble.dataset.cost = evt.cost;
+          if (evt.affinity) {
+            const a = evt.affinity;
+            $('#affBadge').textContent = `💗 ${a.value} ${a.label}`;
+            if (a.delta) {
+              const tag = document.createElement('em');
+              tag.className = 'status';
+              tag.textContent = `好感度 ${a.delta > 0 ? '+' : ''}${a.delta}（${a.reason}）`;
+              bubble.appendChild(tag);
+            }
+          }
+        } else if (evt.event === 'token') {
+          acc += evt.text; bubble.textContent = acc;
+          $('#chat').scrollTop = $('#chat').scrollHeight;
+        } else if (evt.event === 'error') {
+          toast('模型错误：' + evt.msg);
+        }
+      }
+    }
+  } catch (e) {
+    toast('请求异常：' + e.message);
+  }
+  if (!acc) bubble.textContent = '（无输出）';
+  state.sending = false; $('#send').disabled = false;
+  // 流式刚生成的这条消息需要拿 messageId 才能朗读
+  if (acc && state.chatroom) {
+    const lr = await api('/api/message/list?chatroomId=' + state.chatroom.id);
+    const last = (lr.data || []).filter(m => m.speaker === 'assistant').pop();
+    if (last) {
+      bubble.dataset.id = last.id;
+      const btn = bubble.querySelector('.say');
+      if (btn) btn.onclick = (e) => { e.stopPropagation(); playSpeech(last.id, btn); };
+    }
+  }
+  refreshWallet(); refreshAd();
+}
+
+/* ---------- 广场（动态流）---------- */
+async function renderFeed() {
+  const box = $('#feed');
+  box.innerHTML = '';
+
+  // 发帖区
+  const post = document.createElement('div');
+  post.className = 'card';
+  post.innerHTML = `<textarea id="feedInput" placeholder="分享你的故事…（消耗 3 💖，前 3 次免费）"
+      style="height:64px;width:100%;background:var(--panel2);color:var(--ink);
+             border:1px solid var(--line);border-radius:9px;padding:9px;font:inherit"></textarea>
+    <div style="margin-top:8px;display:flex;justify-content:flex-end">
+      <button class="act" style="height:34px" id="feedSend">发布</button></div>`;
+  box.appendChild(post);
+  post.querySelector('#feedSend').onclick = async () => {
+    const t = post.querySelector('#feedInput').value.trim();
+    if (!t) return toast('内容不能为空');
+    const r = await api('/api/moment/create', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ content: t })
+    });
+    if (r.flag !== 0) {
+      return toast(r.msg === 'NOT_ENOUGH_HEARTS' ? 'Hearts 不足' : '发布失败：' + r.msg);
+    }
+    toast(r.data.cost === 0 ? '已发布（免费额度）' : `已发布，消耗 ${r.data.cost} 💖`);
+    refreshWallet(); renderFeed();
+  };
+
+  const r = await api('/api/moment/list');
+  const items = r.data || [];
+  if (!items.length) {
+    const e = document.createElement('div');
+    e.className = 'empty'; e.textContent = '还没有动态，发一条试试';
+    box.appendChild(e); return;
+  }
+  for (const m of items) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    const when = new Date(m.created_at * 1000).toLocaleString();
+    c.innerHTML = `<div class="meta">
+        ${m.role_name ? `<b style="color:var(--gold)">@${m.role_name}</b>` : ''}
+        <span>${when}</span>
+        ${m.tags.map(t => `<span class="tags" style="display:inline"><span>${t}</span></span>`).join('')}
+      </div>
+      <div class="body">${m.content}</div>
+      <div class="acts">
+        <span data-a="like" class="${m.liked ? 'on' : ''}">♥ ${m.like_count}</span>
+        <span data-a="cmt">💬 ${m.comment_count}</span>
+        <span data-a="save" class="${m.saved ? 'on' : ''}">${m.saved ? '★ 已收藏' : '☆ 收藏'}</span>
+      </div>
+      <div class="cmt" style="display:none"></div>`;
+
+    c.querySelector('[data-a=like]').onclick = async () => {
+      const on = !m.liked;
+      const rr = await api('/api/moment/' + (on ? 'like' : 'unlike'), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ momentId: m.id })
+      });
+      if (rr.flag === 0) renderFeed();
+    };
+    c.querySelector('[data-a=save]').onclick = async () => {
+      const on = !m.saved;
+      await api('/api/moment/' + (on ? 'save' : 'unsave'), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ momentId: m.id })
+      });
+      renderFeed();
+    };
+    c.querySelector('[data-a=cmt]').onclick = async () => {
+      const box2 = c.querySelector('.cmt');
+      if (box2.style.display === 'block') { box2.style.display = 'none'; return; }
+      const cr = await api('/api/moment/comment/list?momentId=' + m.id);
+      const list = (cr.data || []).map(x => '· ' + x.content).join('\n') || '（还没有评论）';
+      box2.innerHTML = list +
+        `<div style="margin-top:8px;display:flex;gap:6px">
+           <input id="ci${m.id}" placeholder="写评论（2 💖）"
+             style="flex:1;background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+                    border-radius:7px;padding:5px 8px;font:inherit;font-size:12px">
+           <button class="ghost" id="cs${m.id}">发送</button></div>`;
+      box2.style.display = 'block';
+      box2.querySelector('#cs' + m.id).onclick = async () => {
+        const t = box2.querySelector('#ci' + m.id).value.trim();
+        if (!t) return;
+        const rr = await api('/api/moment/comment/create', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ momentId: m.id, content: t })
+        });
+        if (rr.flag !== 0) return toast(rr.msg === 'NOT_ENOUGH_HEARTS' ? 'Hearts 不足' : rr.msg);
+        refreshWallet(); renderFeed();
+      };
+    };
+    box.appendChild(c);
+  }
+}
+
+/* ---------- 隐藏章节 ---------- */
+async function renderChapters() {
+  const box = $('#chat');
+  box.innerHTML = '';
+  if (!state.role) { box.innerHTML = '<div class="empty">请先选择一个角色</div>'; return; }
+  const r = await api('/api/hidden-chapter/list?roleId=' + state.role.id);
+  if (r.flag !== 0) return toast('加载失败：' + r.msg);
+  const d = r.data;
+
+  const head = document.createElement('div');
+  head.className = 'ch';
+  const pct = Math.round(((d.affinity + 2000) / 4000) * 100);
+  head.innerHTML = `<div class="h"><span class="t">${state.role.name} · 隐藏章节</span>
+      <span class="th">好感度 ${d.affinity} ｜ 已解锁 ${d.unlockedCount}/${d.total}</span></div>
+    <div class="affbar"><i style="width:${pct}%"></i></div>`;;
+  box.appendChild(head);
+
+  for (const c of d.chapters) {
+    const el = document.createElement('div');
+    el.className = 'ch' + (c.unlocked ? '' : ' locked');
+    el.innerHTML = `<div class="h">
+        <span class="t">${c.unlocked ? '🔓' : '🔒'} ${c.title}
+          <span class="pill ${c.type === 'negative' ? 'neg' : 'pos'}">${c.type === 'negative' ? '负向' : '正向'}</span>
+        </span>
+        <span class="th">需好感度 ${c.type === 'negative' ? '≤' : '≥'} ${c.affinity_threshold}</span>
+      </div>
+      <div class="intro">${c.intro}</div>`;
+
+    if (c.unlocked) {
+      const btn = document.createElement('button');
+      btn.className = 'ghost';
+      btn.style.marginTop = '8px';
+      btn.textContent = '进入章节';
+      btn.onclick = async () => {
+        const rr = await api('/api/hidden-chapter/enter', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ chapterId: c.id, roleId: state.role.id })
+        });
+        if (rr.flag !== 0) return toast(rr.msg);
+        const b = el.querySelector('.body') || document.createElement('div');
+        b.className = 'body';
+        b.textContent = rr.data.content;
+        el.appendChild(b);
+        btn.remove();
+        toast('章节已进入，剧情已同步进记忆');
+      };
+      el.appendChild(btn);
+    }
+    box.appendChild(el);
+  }
+}
+
+async function refreshAffinity() {
+  if (!state.role || state.tab === 'feed') { $('#affBadge').textContent = ''; return; }
+  const r = await api('/api/affinity?roleId=' + state.role.id);
+  if (r.flag === 0) $('#affBadge').textContent = `💗 ${r.data.value} ${r.data.label}`;
+}
+
+/* ---------- 情景（Scenario）---------- */
+async function renderScenarios() {
+  const box = $('#feed');
+  box.innerHTML = '';
+  const meta = await api('/api/scenario/meta');
+  const cats = (meta.data && meta.data.categories) || [];
+
+  // 筛选栏
+  const bar = document.createElement('div');
+  bar.className = 'card';
+  bar.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center';
+  bar.innerHTML = `<input id="scQ" placeholder="搜索情景…"
+      style="flex:1;min-width:140px;background:var(--panel2);color:var(--ink);
+             border:1px solid var(--line);border-radius:8px;padding:6px 9px;font:inherit;font-size:12px">
+    <select id="scCat" style="font-size:12px"><option value="">全部分类</option>
+      ${cats.map(c => `<option>${c}</option>`).join('')}</select>
+    <select id="scScope" style="font-size:12px">
+      <option value="all">全部</option><option value="mine">我创建的</option>
+      <option value="liked">我点赞的</option></select>
+    <button class="ghost" id="scNew">+ 新建情景</button>`;
+  box.appendChild(bar);
+
+  const load = async () => {
+    const q = bar.querySelector('#scQ').value.trim();
+    const cat = bar.querySelector('#scCat').value;
+    const scope = bar.querySelector('#scScope').value;
+    const url = `/api/scenario/list?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&scope=${scope}`;
+    const r = await api(url);
+    [...box.querySelectorAll('.sc-item')].forEach(e => e.remove());
+    const items = r.data || [];
+    if (!items.length) {
+      const e = document.createElement('div');
+      e.className = 'empty sc-item'; e.textContent = '没有符合条件的情景';
+      box.appendChild(e); return;
+    }
+    for (const s of items) {
+      const c = document.createElement('div');
+      c.className = 'card sc-item';
+      c.innerHTML = `<div class="meta">
+          <b style="color:var(--gold);cursor:pointer" data-creator="${s.creator_id}">@${s.creator_name || 'creator'}</b>
+          <span>📍 ${s.location || '—'}</span>
+          <span class="pill pos">${s.category || '—'}</span>
+          <span>播放 ${s.play_count}</span></div>
+        <div class="body"><b>${s.title}</b>\n${s.description}</div>
+        ${s.opener ? `<div class="intro" style="font-size:12px;color:var(--dim);
+            margin-top:6px;font-style:italic">${s.opener}</div>` : ''}
+        <div class="tags" style="margin-top:8px">${(s.tags||[]).map(t=>`<span>${t}</span>`).join('')}</div>
+        <div class="acts">
+          <span data-a="like" class="${s.liked ? 'on' : ''}">♥ ${s.like_count}</span>
+          <span data-a="start">▶ 用这个情景开聊</span>
+        </div>`;
+      c.querySelector('[data-a=like]').onclick = async () => {
+        await api('/api/scenario/' + (s.liked ? 'unlike' : 'like'), {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ scenarioId: s.id })});
+        load();
+      };
+      const crel = c.querySelector('[data-creator]');
+      if (crel) crel.onclick = () => openCreator(parseInt(crel.dataset.creator, 10));
+      c.querySelector('[data-a=start]').onclick = async () => {
+        if (!state.roles.length) return toast('先加载角色库');
+        const rid = state.role ? state.role.id : state.roles[0].id;
+        const rr = await api('/api/chatroom/listScenario', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ scenarioId: s.id, roleId: rid, chatMode: 'story' })});
+        if (rr.flag !== 0) return toast(rr.msg);
+        toast('已用《' + s.title + '》开启新会话');
+        await refreshRooms();
+        const room = state.rooms.find(x => x.id === rr.data.chatroomId);
+        if (room) openRoom(room);
+      };
+      box.appendChild(c);
+    }
+  };
+
+  bar.querySelector('#scQ').oninput = () => { clearTimeout(bar._t); bar._t = setTimeout(load, 300); };
+  bar.querySelector('#scCat').onchange = load;
+  bar.querySelector('#scScope').onchange = load;
+  bar.querySelector('#scNew').onclick = async () => {
+    const t = prompt('情景标题：');
+    if (!t) return;
+    const op = prompt('开场设定（开聊时先展示）：') || '';
+    const r = await api('/api/scenario/create', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ title: t, opener: op, description: op.slice(0, 60),
+                             category: bar.querySelector('#scCat').value || 'romance' })});
+    if (r.flag !== 0) return toast(r.msg);
+    toast('情景已创建'); load();
+  };
+
+  load();
+}
+
+/* ---------- 相册 / UGC ---------- */
+async function renderAlbum() {
+  const box = $('#feed');
+  box.innerHTML = '';
+
+  const styles = await api('/api/ugc/style');
+  const sl = (styles.data || []);
+
+  const gen = document.createElement('div');
+  gen.className = 'gen';
+  gen.innerHTML = `<div style="font-weight:600;font-size:13px;margin-bottom:8px">
+      生成图片 <span style="color:var(--dim);font-weight:400;font-size:11px">
+      （头像 6💖/免费额度 · 相册图 21💖 · 约 20 秒）</span></div>
+    <textarea id="genPrompt" placeholder="描述你想要的画面…如：A moonlit ballroom with shattered chandeliers"></textarea>
+    <div class="row2">
+      <select id="genStyle" style="font-size:12px">
+        <option value="">无风格</option>
+        ${sl.map(s => `<option value="${s.id}">${s.label}</option>`).join('')}
+      </select>
+      <select id="genKind" style="font-size:12px">
+        <option value="ugc">头像（6💖）</option>
+        <option value="album">相册图（21💖）</option>
+      </select>
+      <button class="act" style="height:30px;padding:0 14px" id="genGo">生成</button>
+      <span id="genStatus" style="font-size:11px;color:var(--dim)"></span>
+    </div>`;
+  box.appendChild(gen);
+
+  gen.querySelector('#genGo').onclick = async () => {
+    const p = gen.querySelector('#genPrompt').value.trim();
+    if (!p) return toast('请输入描述');
+    const kind = gen.querySelector('#genKind').value;
+    const st = gen.querySelector('#genStatus');
+    st.innerHTML = '<span class="busy"></span> 生成中，约 20 秒…';
+    const url = kind === 'album' ? '/api/album/generate' : '/api/ugc/generate';
+    const r = await api(url, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ prompt: p, style: gen.querySelector('#genStyle').value })
+    });
+    if (r.flag !== 0) {
+      st.textContent = '';
+      return toast(r.msg === 'NOT_ENOUGH_HEARTS' ? 'Hearts 不足' : r.msg);
+    }
+    st.textContent = '';
+    toast(`生成 ${r.data.count} 张，消耗 ${r.data.cost}💖`);
+    refreshWallet(); renderAlbum();
+  };
+
+  const r = await api('/api/album/list');
+  const items = (r.data && r.data.items) || [];
+  if (!items.length) {
+    const e = document.createElement('div');
+    e.className = 'empty'; e.textContent = '相册是空的，生成一张试试';
+    box.appendChild(e); return;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  for (const it of items) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.innerHTML = `<img src="${API_BASE}${it.url}" alt="${it.prompt}" loading="lazy">
+      <span class="tag">${it.source}${it.heart_cost ? ' · ' + it.heart_cost + '💖' : ' · 免费'}</span>`;
+    grid.appendChild(cell);
+  }
+  box.appendChild(grid);
+  api('/api/album/mark-read', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+}
+
+/* ---------- 创作者主页 ---------- */
+async function openCreator(creatorId) {
+  const box = $('#feed');
+  const prevTab = state.tab;
+  box.style.display = 'flex';
+  $('#chat').style.display = 'none';
+  $('#composer').style.display = 'none';
+  $('#chatTools').style.display = 'flex';
+  $('#who').textContent = '创作者';
+  $('#sub').textContent = '';
+  setHero(null);
+
+  const [cr, social] = await Promise.all([
+    api('/api/creator/get?userId=' + creatorId),
+    api('/api/following/list')
+  ]);
+  if (cr.flag !== 0) { toast('加载失败'); return; }
+  const c = cr.data;
+  const ov = c.overview || {};
+  const following = ((social.data && social.data.following) || [])
+                      .some(f => f.following_id === creatorId);
+
+  box.innerHTML = '';
+  const card = document.createElement('div');
+  card.className = 'gen';
+  card.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <div>
+        <div style="font-size:16px;font-weight:600">${c.display_name || 'Creator'}</div>
+        <div style="font-size:12px;color:var(--dim);margin-top:3px">${c.bio || '—'}</div>
+        <div style="font-size:11px;color:var(--gold);margin-top:7px">
+          角色 ${ov.roleCount ?? 0} ｜ 粉丝 ${ov.followerCount ?? 0}</div>
+      </div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="ghost" id="crFollow">${following ? '已关注' : '+ 关注'}</button>
+        <button class="ghost" id="crBlock">🚫 屏蔽</button>
+        <button class="ghost" id="crBack">← 返回</button>
+      </div>
+    </div>`;
+  box.appendChild(card);
+
+  card.querySelector('#crFollow').onclick = async () => {
+    const url = following ? '/api/following/delete' : '/api/following/request';
+    const r = await api(url, { method:'POST', headers:{'Content-Type':'application/json'},
+                               body: JSON.stringify({ creatorId }) });
+    if (r.flag !== 0) return toast(r.msg === 'self' ? '不能关注自己' : r.msg);
+    toast(following ? '已取消关注' : '已关注');
+    openCreator(creatorId);
+  };
+  card.querySelector('#crBlock').onclick = async () => {
+    if (!confirm('屏蔽后会自动解除关注，确定？')) return;
+    await api('/api/creator/block/update', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ creatorId, blocked: true })});
+    toast('已屏蔽');
+  };
+  card.querySelector('#crBack').onclick = () => switchTab(prevTab);
+
+  const roles = (c.roles || []);
+  if (roles.length) {
+    const h = document.createElement('div');
+    h.className = 'gen'; h.style.maxWidth = '620px';
+    h.innerHTML = `<div style="font-size:12px;color:var(--gold);margin-bottom:9px">
+        TA 的角色</div><div class="tags">${roles.map(r=>`<span>${r.name}</span>`).join('')}</div>`;
+    box.appendChild(h);
+  }
+}
+
+/* ---------- 语音播放 ---------- */
+const speechCache = new Map();     // messageId → audio url
+let currentAudio = null;
+
+async function playSpeech(msgId, el) {
+  // 同一时间只播一条
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+  const prev = document.querySelector('.msg .say.playing');
+  if (prev) prev.classList.remove('playing');
+
+  let url = speechCache.get(msgId);
+  if (!url) {
+    el.classList.add('loading');
+    el.textContent = '合成中…';
+    const r = await api('/api/message/speech/generate', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ messageId: msgId, chatroomId: state.chatroom.id })
+    });
+    el.classList.remove('loading');
+    if (r.flag !== 0) {
+      el.textContent = '🔇 失败';
+      setTimeout(() => { el.textContent = '🔊 朗读'; }, 1800);
+      return toast(r.msg.slice(0, 60));
+    }
+    url = API_BASE + r.data.url;
+    speechCache.set(msgId, url);
+  }
+
+  const audio = new Audio(url);
+  currentAudio = audio;
+  el.classList.add('playing');
+  el.textContent = '⏸ 播放中';
+  const done = () => {
+    el.classList.remove('playing');
+    el.textContent = '🔊 朗读';
+    if (currentAudio === audio) currentAudio = null;
+  };
+  audio.onended = done;
+  audio.onerror = () => { done(); toast('音频播放失败'); };
+  el.onclick = () => { audio.pause(); done(); };
+  audio.play().catch(() => { done(); toast('浏览器拦截了自动播放，请再点一次'); });
+}
+
+/* ---------- 钱包 / 广告 / 记忆 ---------- */
+async function refreshWallet() {
+  const r = await api('/api/heart/list');
+  if (r.flag === 0) $('#hearts').textContent = r.data.heartInfo.amount;
+}
+async function refreshAd() {
+  const r = await api('/api/ad/times');
+  if (r.flag !== 0) return;
+  const chat = r.data.CHAT, daily = r.data.DAILY_HEART;
+  const mine = state.chatroom ? (chat.unredeemedChatroomIds || []).includes(state.chatroom.id) : false;
+  $('#adInfo').textContent =
+    `📺 聊天额度 ${chat.count}/${chat.limit}${mine ? ' · 本条已免费' : ''} ｜ 每日 hearts ${daily.count}/${daily.limit}`;
+}
+function updateCost() {
+  const m = currentMode();
+  $('#cost').textContent = m ? `本次消耗：${m.heartCost} 💖（${m.id} → ${m.model}）` : '本次消耗：–';
+}
+
+$('#btnAd').onclick = async () => {
+  const kind = state.chatroom ? 'CHAT' : 'DAILY_HEART';
+  const r = await api('/api/ad/reward', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ type: kind, chatroomId: state.chatroom ? state.chatroom.id : null })
+  });
+  if (r.flag !== 0) return toast('广告额度已用尽（' + r.msg + '）');
+  toast(kind === 'CHAT' ? '已获得：本会话下一条消息免费' : `已获得 ${r.data.hearts} 💖`);
+  refreshWallet(); refreshAd();
+};
+$('#btnMem').onclick = async () => {
+  if (!state.chatroom) return toast('请先进入一个会话');
+  const r = await api('/api/memory/summarize', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ chatroomId: state.chatroom.id })
+  });
+  toast(r.flag === 0 ? '记忆已写入：' + r.data.summary.slice(0, 40) : '摘要失败：' + r.msg);
+};
+$('#btnChapters').onclick = () => { state.tab = 'chapters'; switchTab('chapters'); };
+
+/* ---------- 初始化 ---------- */
+function switchTab(t) {
+  state.tab = t;
+  $('#tabRoles').classList.toggle('on', t === 'roles');
+  $('#tabRooms').classList.toggle('on', t === 'rooms');
+  $('#tabFeed').classList.toggle('on', t === 'feed');
+  $('#tabScen').classList.toggle('on', t === 'scenario');
+  $('#tabAlbum').classList.toggle('on', t === 'album');
+  const inOverlay = (t === 'feed' || t === 'scenario' || t === 'album');
+  const inChapters = (t === 'chapters');
+  $('#chat').style.display = (inOverlay) ? 'none' : 'flex';
+  $('#composer').style.display = (inOverlay || inChapters) ? 'none' : 'block';
+  $('#chatTools').style.display = inOverlay ? 'none' : 'flex';
+  $('#feed').style.display = inOverlay ? 'flex' : 'none';
+  if (inFeed) { $('#who').textContent = '动态'; $('#sub').textContent = '创作者的动态'; setHero(null); renderFeed(); }
+  else if (t === 'scenario') { $('#who').textContent = '情景'; $('#sub').textContent = '选一个情景开聊'; setHero(null); renderScenarios(); }
+  else if (t === 'album') { $('#who').textContent = '相册'; $('#sub').textContent = 'AI 生成的角色图像'; setHero(null); renderAlbum(); }
+  else if (inChapters) { $('#who').textContent = (state.role ? state.role.name : '') + ' · 隐藏章节'; $('#sub').textContent = '好感度驱动解锁'; setHero(state.role ? state.role.name : null); renderChapters(); }
+  else { setHero(null); renderList(); }
+}
+async function refreshRooms() {
+  const r = await api('/api/chatroom/list');
+  state.rooms = r.flag === 0 ? r.data : [];
+}
+$('#tabRoles').onclick = () => switchTab('roles');
+$('#tabRooms').onclick = () => switchTab('rooms');
+$('#tabFeed').onclick = () => switchTab('feed');
+$('#tabScen').onclick = () => switchTab('scenario');
+$('#tabAlbum').onclick = () => switchTab('album');
+
+/* ---- 移动端抽屉导航（窄屏才可见的 ☰）---- */
+function navOpen(v){ document.body.classList.toggle('nav-open', !!v); }
+$('#btnMenu').onclick = () => navOpen(!document.body.classList.contains('nav-open'));
+$('#scrim').onclick = () => navOpen(false);
+
+/* ---- 触屏设备：键盘快捷键提示无意义，换成简洁文案 ----
+   桌面（有 hover 能力）保留 Enter / Shift+Enter 说明。 */
+if (window.matchMedia && window.matchMedia('(hover: none)').matches) {
+  $('#input').placeholder = '说点什么…';
+}
+$('#send').onclick = send;
+$('#modeSel').onchange = updateCost;
+$('#input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+
+(async function init() {
+  if (API_BASE) $('#apiHint').textContent = 'API: ' + API_BASE;
+  const [roles, modes] = await Promise.all([api('/api/role/list'), api('/api/chatMode')]);
+  state.roles = roles.data || [];
+  state.modes = modes.data || [];
+  $('#modeSel').innerHTML = state.modes.map(m =>
+    `<option value="${m.id}">${m.id} · ${m.heartCost}💖</option>`).join('');
+  $('#modeSel').value = 'classic';
+  updateCost();
+  await refreshRooms();
+  renderList();
+  refreshWallet();
+  refreshAd();
+})();
+</script>
+</body>
+</html>

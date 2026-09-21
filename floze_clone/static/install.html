@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>FlOZE 复刻版 · 安装</title>
+<style>
+  :root{--bg:#0d0b12;--card:#191524;--accent:#c9a227;--accent2:#8b5cf6;--txt:#ece9f4;--dim:#9b93ad}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;min-height:100vh;background:radial-gradient(120% 80% at 50% 0%,#241b38 0%,var(--bg) 60%);
+       font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;
+       color:var(--txt);display:flex;align-items:center;justify-content:center;padding:24px}
+  .wrap{width:100%;max-width:420px}
+  .logo{font-size:30px;font-weight:700;letter-spacing:.14em;text-align:center;
+        background:linear-gradient(92deg,var(--accent),var(--accent2));-webkit-background-clip:text;
+        background-clip:text;color:transparent;margin-bottom:6px}
+  .sub{text-align:center;color:var(--dim);font-size:13px;margin-bottom:26px}
+  .card{background:var(--card);border:1px solid #2a2340;border-radius:18px;padding:22px;margin-bottom:16px}
+  .btn{display:block;text-align:center;text-decoration:none;padding:17px;border-radius:14px;
+       background:linear-gradient(92deg,var(--accent),#e0b83a);color:#1a1500;font-weight:700;font-size:17px;
+       box-shadow:0 8px 22px rgba(201,162,39,.28)}
+  .btn:active{transform:translateY(1px)}
+  .meta{margin-top:14px;font-size:12.5px;color:var(--dim);line-height:1.85;text-align:center}
+  h3{font-size:14px;margin:0 0 12px;color:var(--accent);letter-spacing:.04em}
+  ol{margin:0;padding-left:20px;font-size:13.5px;line-height:2;color:#cdc6dc}
+  code{background:#241d36;padding:2px 7px;border-radius:6px;font-size:12.5px;color:#e5d9a8;
+       word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .warn{background:#2a1a1f;border:1px solid #4a2630;border-radius:12px;padding:13px 15px;
+        font-size:12.5px;line-height:1.8;color:#f0c4cd;margin-top:14px}
+</style></head><body>
+<div class="wrap">
+  <div class="logo">FLOZE</div>
+  <div class="sub">复刻版 · 测试环境安装包</div>
+
+  <div class="card">
+    <a class="btn" href="/download/floze-clone-debug.apk" download>⬇︎ 下载安装包 (2.1 MB)</a>
+    <div class="meta">floze-clone-debug.apk<br>Android 5.0 及以上</div>
+  </div>
+
+  <div class="card">
+    <h3>安装步骤</h3>
+    <ol>
+      <li><b>装过旧版请先长按图标卸载</b>（签名已变更，无法覆盖安装）</li>
+      <li>点上方按钮下载 APK</li>
+      <li>若提示「禁止安装」，到<br><code>设置 → 安全 → 安装未知应用</code><br>允许浏览器安装</li>
+      <li>下载完成后点击文件安装</li>
+      <li>若被手机管家拦截，选「继续安装」</li>
+    </ol>
+    <div class="warn">
+      ⚠️ 首次打开若显示空白：说明手机与电脑不在同一 WiFi。<br>
+      请连上 <b>ChinaNet-jkML-5G</b> 后重试。
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>当前服务地址</h3>
+    <div class="meta" style="text-align:left">
+      API：<code id="api"></code><br>
+      本机：<code id="host"></code><br>
+      版本：<code>v0.1.0 · 2026-09-21 08:38</code>
+    </div>
+  </div>
+</div>
+<script>
+  var h = location.hostname, p = location.port || '8080';
+  document.getElementById('api').textContent  = 'http://' + h + ':' + p;
+  document.getElementById('host').textContent = h;
+</script>
+</body></html>
