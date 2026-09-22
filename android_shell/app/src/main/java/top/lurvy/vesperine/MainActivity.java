@@ -1,4 +1,4 @@
-package com.floze.clone;
+package top.lurvy.vesperine;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
@@ -22,7 +22,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 /**
- * FlOZE 复刻 —— 主 Activity
+ * Vesperine —— 主 Activity
  *
  * 极简 WebView 壳：
  *   - 加载测试服务器上的 Web 前端

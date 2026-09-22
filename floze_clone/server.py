@@ -1,11 +1,11 @@
 """
-FlOZE 复刻 —— 主服务（零依赖，仅用 Python 标准库）
+Vesperine 复刻 —— 主服务（零依赖，仅用 Python 标准库）
 
 端点命名对齐 floze_reverse/api_contract.txt 中逆向出的真实契约：
     /user/settings  /role/list  /chatMode  /chatroom/*  /message/*
     /heart/*  /ad/*
 
-响应统一为 {flag, msg, data}，flag=0 为成功（FlOZE 全站约定）。
+响应统一为 {flag, msg, data}，flag=0 为成功（Vesperine 全站约定）。
 
 运行：
     python3 server.py            # 默认 8080，mock 模式（无需 API key）
@@ -66,10 +66,10 @@ PAYMENT_MODE = _os.environ.get("PAYMENT_MODE", "stub")
 # 广告冷却（秒）—— 对齐实测到的默认冷却 90s
 AD_COOLDOWN = 90
 
-# 免费额度（对齐 FlOZE 的 freeQuotaType）
+# 免费额度（对齐 Vesperine 的 freeQuotaType）
 FREE_QUOTA = {"suggestReply": 5, "roleUgc": 3, "momentPost": 3, "momentComment": 5}
 
-# 动态流消耗配置（对齐 FlOZE 的 heart store 实测值）
+# 动态流消耗配置（对齐 Vesperine 的 heart store 实测值）
 MOMENT_COST = {"post": 3, "comment": 2}
 
 
@@ -267,7 +267,7 @@ class API:
         return ok(self.s.list_moments(u["id"]))
 
     def moment_create(self, body: dict) -> dict:
-        """发帖：free 额度 → hearts（对齐 FlOZE 的 free → heart 策略链）"""
+        """发帖：free 额度 → hearts（对齐 Vesperine 的 free → heart 策略链）"""
         u = self.s.ensure_user()
         content = (body.get("content") or "").strip()
         if not content:
@@ -623,7 +623,7 @@ class API:
         return ok(imagegen.list_styles())
 
     def _charge(self, u: dict, cost: int, reason: str):
-        """免费额度 → hearts 的两级策略（对齐 FlOZE 的 free → heart 链）。
+        """免费额度 → hearts 的两级策略（对齐 Vesperine 的 free → heart 链）。
         返回 (ok, error_response)。
         """
         fq_type = "roleUgc"
@@ -911,7 +911,7 @@ class API:
     def prepare_send(self, body: dict):
         """
         校验并决定这次发送是否计费。返回 (chatroom, cost, is_ad_funded, error)。
-        对齐 FlOZE 的 preCheck：free → heart → ad 三级策略。
+        对齐 Vesperine 的 preCheck：free → heart → ad 三级策略。
         """
         u = self.s.ensure_user()
         cid = int(body.get("chatroomId", 0))
@@ -1269,7 +1269,7 @@ def main():
 
     mode = "真实模型" if llm.api_key() else "mock（未设置 MINIMAX_API_KEY）"
     print("=" * 62)
-    print("  FlOZE 复刻 —— 测试环境已启动")
+    print("  Vesperine 复刻 —— 测试环境已启动")
     print("=" * 62)
     print(f"  模型: {mode}")
     print(f"  广告: {AD_CONFIG['mode']}   支付: {PAYMENT_MODE}")
@@ -1281,7 +1281,7 @@ def main():
         print(f"    {a:34s} {tag}")
     print("-" * 62)
     print("  打包/嵌入提示：若前端不在同源运行，用")
-    print("    <页面地址>?api=http://<IP>:8080   或注入 window.__FLOZE_API__")
+    print("    <页面地址>?api=http://<IP>:8080   或注入 window.__VESPERINE_API__")
     if HOST == "0.0.0.0":
         print("  ⚠️  已监听 0.0.0.0 —— 请勿直接把此端口暴露到公网")
     print("=" * 62)

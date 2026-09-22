@@ -128,7 +128,7 @@
 
 ```
 服务端：HOST=0.0.0.0 PORT=8080 python3 server.py
-APK：   android_shell/out/floze-clone-debug.apk
+APK：   android_shell/out/vesperine-debug.apk
 ```
 
 ### 5.3 内容分级

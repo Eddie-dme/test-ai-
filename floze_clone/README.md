@@ -1,7 +1,7 @@
-# Floze Clone — 1:1 复刻实现
+# Vesperine — 1:1 复刻实现
 
-> 依据：`Floze复刻开发规格书.md`、`floze_reverse/api_contract.txt`、
-> `Floze广告变现策略拆解.md`、`floze_reverse/模型替换实测评估.md`
+> 依据：`Vesperine复刻开发规格书.md`、`floze_reverse/api_contract.txt`、
+> `Vesperine广告变现策略拆解.md`、`floze_reverse/模型替换实测评估.md`
 > 技术栈：Python 3 标准库（**零依赖**）+ 原生 HTML/JS（无构建）
 
 > ⚠️ **模型变更（重要）**

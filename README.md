@@ -1,4 +1,4 @@
-# FlOZE Clone
+# Vesperine
 
 AI 角色扮演对话应用 —— 服务端、Web 前端与 Android 客户端。
 
@@ -117,7 +117,7 @@ HOST=0.0.0.0 PORT=8080 python3 -u server.py
 
 ```bash
 cd android_shell
-./build_apk.sh                        # 产物在 out/floze-clone-debug.apk
+./build_apk.sh                        # 产物在 out/vesperine-debug.apk
 ```
 
 需先设置 `JAVA_HOME` 与 `ANDROID_HOME`（脚本内有说明）。

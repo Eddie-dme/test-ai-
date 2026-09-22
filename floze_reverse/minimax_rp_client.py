@@ -48,7 +48,7 @@ def load_api_key() -> str:
 # ---------------------------------------------------------------- FlOZE 数据模型
 
 @dataclass
-class FlozeRole:
+class VesperineRole:
     """对应 FlOZE 的 role 实体（/role/*，Creator Studio 可编辑）"""
     name: str
     description: str                  # 角色简介
@@ -75,7 +75,7 @@ class FlozeRole:
 
 
 @dataclass
-class FlozePersona:
+class VesperinePersona:
     """对应 FlOZE 的 persona（用户自称身份，/persona/*）"""
     name: str
     description: str
@@ -167,7 +167,7 @@ class MiniMaxRPClient:
             body = e.read().decode(errors="replace")
             raise RuntimeError(f"HTTP {e.code}: {body[:400]}") from None
 
-    def build_messages(self, role: FlozeRole, persona: FlozePersona | None,
+    def build_messages(self, role: VesperineRole, persona: VesperinePersona | None,
                        memory: Memory | None, mode: ChatMode,
                        history: list[tuple[str, str]]) -> list[dict]:
         msgs: list[dict] = []
@@ -199,7 +199,7 @@ class MiniMaxRPClient:
                 msgs.append({"role": "assistant", "name": role.name, "content": text})
         return msgs
 
-    def chat(self, role: FlozeRole, persona: FlozePersona | None,
+    def chat(self, role: VesperineRole, persona: VesperinePersona | None,
              memory: Memory | None, mode: ChatMode,
              history: list[tuple[str, str]]) -> str:
         payload = {
@@ -239,7 +239,7 @@ def demo():
     client = MiniMaxRPClient(key)
 
     # —— 用 FlOZE 的真实产品结构构造（对应 Creator Studio 的可填字段）——
-    role = FlozeRole(
+    role = VesperineRole(
         name="Lucien",
         description="A brooding vampire duke who rules a decaying moonlit estate.",
         personality="Restrained, elegant, possessive, secretly tender",
@@ -248,7 +248,7 @@ def demo():
                     "his fiancée died, refusing to let time move forward."),
         status_bar="📍 Moonlit Hall | 💖 Affection: 12% | 🩸 Thirst: 40%",
     )
-    persona = FlozePersona(
+    persona = VesperinePersona(
         name="Elara",
         description=("A mortal cartographer hired to map the estate. Bold, curious, "
                      "and unafraid of things that should frighten her."),

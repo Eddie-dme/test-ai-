@@ -1,6 +1,6 @@
 # 测试环境 APK 安装说明
 
-> APK 路径：`android_shell/out/floze-clone-debug.apk`（2.1 MB）
+> APK 路径：`android_shell/out/vesperine-debug.apk`（2.1 MB）
 > 构建日期：2026-09-21
 
 ---
@@ -11,7 +11,7 @@
 
 ```
 ┌──────────────────────────────────┐
-│  Floze Clone (2.1 MB)            │
+│  Vesperine (2.1 MB)            │
 │  ├─ MainActivity   原生壳          │
 │  ├─ assets/www/    内嵌的 Web 前端  │  ← 界面与立绘在本地
 │  │   index.html                    │     启动不依赖网络
@@ -23,16 +23,16 @@
    http://192.168.71.82:8080
 ```
 
-**与原品 FlOZE 架构一致** —— 它也是「轻原生壳 + WebView 承载业务 UI」
-（见 `Floze复刻开发规格书.md` §3.1）。
+**与原品 Vesperine 架构一致** —— 它也是「轻原生壳 + WebView 承载业务 UI」
+（见 `Vesperine复刻开发规格书.md` §3.1）。
 
 体积对比：
 
 ```
 我们的复刻                  2.1 MB  （含 6 张立绘、内嵌前端）
 ├─ 纯壳版（不内嵌）         137 KB
-FlOZE 原版 base              31 MB
-FlOZE 含 split               66 MB
+Vesperine 原版 base              31 MB
+Vesperine 含 split               66 MB
 ```
 
 ---
@@ -62,12 +62,12 @@ HOST=0.0.0.0 PORT=8080 python3 -u server.py
 
 ```bash
 export PATH="/Users/mobvista/Downloads/test/toolchain/android-sdk/platform-tools:$PATH"
-adb install -r android_shell/out/floze-clone-debug.apk
+adb install -r android_shell/out/vesperine-debug.apk
 ```
 
 **方法 B：直接传文件**
 
-把 `floze-clone-debug.apk` 发到手机（微信/AirDrop/网盘）点击安装。
+把 `vesperine-debug.apk` 发到手机（微信/AirDrop/网盘）点击安装。
 首次安装需在系统设置里允许「安装未知来源应用」。
 
 ### 3. 打开 App
@@ -75,7 +75,7 @@ adb install -r android_shell/out/floze-clone-debug.apk
 **界面立即出现**（内嵌资源），标题栏会显示当前服务器地址：
 
 ```
-Floze Clone  ·  http://192.168.71.82:8080
+Vesperine  ·  http://192.168.71.82:8080
 ```
 
 若服务端未启动或 IP 不对，界面能打开但 API 请求会失败。

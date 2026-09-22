@@ -1,6 +1,6 @@
 #!/bin/zsh
 #
-# FlOZE 复刻 —— APK 构建脚本（不依赖 Gradle，直接用 Android SDK 命令行工具）
+# Vesperine —— APK 构建脚本（不依赖 Gradle，直接用 Android SDK 命令行工具）
 #
 # 流程：
 #   aapt2 compile/link  →  资源编译与链接，生成 R.java
@@ -9,7 +9,7 @@
 #   zipalign + apksigner→  对齐与签名
 #
 # 用法：  ./build_apk.sh
-# 产物：  ./out/floze-clone-debug.apk
+# 产物：  ./out/vesperine-debug.apk
 
 set -e
 cd "$(dirname "$0")"
@@ -25,7 +25,7 @@ OUT="out"
 # ⚠️ keystore 必须放在 out/ 之外：out/ 每次构建都会被 rm -rf，
 # 放在里面会导致每次重新生成密钥 → 签名变化 → 手机无法覆盖安装。
 KEYSTORE="$PWD/debug.keystore"
-PKG_PATH="com/floze/clone"
+PKG_PATH="top/lurvy/vesperine"
 
 echo "── 环境检查 ──"
 for f in "$JAVA_HOME/bin/javac" "$BUILD_TOOLS/aapt2" "$BUILD_TOOLS/d8" "$BUILD_TOOLS/apksigner" "$BUILD_TOOLS/zipalign" "$PLATFORM"; do
@@ -103,14 +103,14 @@ fi
 "$BUILD_TOOLS/apksigner" sign \
   --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
   --ks-key-alias androiddebugkey \
-  --out "$OUT/floze-clone-debug.apk" "$OUT/aligned.apk"
+  --out "$OUT/vesperine-debug.apk" "$OUT/aligned.apk"
 
 echo
 echo "── 验证签名 ──"
-"$BUILD_TOOLS/apksigner" verify --print-certs "$OUT/floze-clone-debug.apk" | head -4
+"$BUILD_TOOLS/apksigner" verify --print-certs "$OUT/vesperine-debug.apk" | head -4
 
 echo
 echo "════════════════════════════════════════"
-ls -lh "$OUT/floze-clone-debug.apk"
-echo "产物: $(pwd)/$OUT/floze-clone-debug.apk"
+ls -lh "$OUT/vesperine-debug.apk"
+echo "产物: $(pwd)/$OUT/vesperine-debug.apk"
 echo "════════════════════════════════════════"

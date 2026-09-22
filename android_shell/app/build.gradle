@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.floze.clone'
+    namespace 'top.lurvy.vesperine'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.floze.clone"
+        applicationId "top.lurvy.vesperine"
         minSdk 21
         targetSdk 34
         versionCode 1

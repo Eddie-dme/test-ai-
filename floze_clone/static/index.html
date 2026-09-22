@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Floze Clone · Romantasy AI Chat</title>
+<title>Vesperine · Romantasy AI Chat</title>
 <style>
   :root{
     --bg:#0d0b14; --panel:#161324; --panel2:#1e1a30; --line:#2b2542;
@@ -246,7 +246,7 @@
 <div class="app">
   <aside>
     <div class="brand">
-      <h1>Floze <span style="color:var(--rose)">Clone</span></h1>
+      <h1>Vesperine</h1>
       <p>Romantasy AI Chat · 1:1 复刻</p>
       <p id="apiHint" style="margin-top:4px;font-size:10px;color:var(--dim)"></p>
     </div>
@@ -309,7 +309,7 @@ const $ = s => document.querySelector(s);
 
 /* API 地址解析 —— 三种方式，按优先级：
  *   1. URL 参数：  http://host/page?api=http://192.168.1.10:8080
- *   2. 全局注入：  window.__FLOZE_API__ = 'http://192.168.1.10:8080'
+ *   2. 全局注入：  window.__VESPERINE_API__ = 'http://192.168.1.10:8080'
  *   3. 同源（默认，前后端同机时用）
  * 打包成 App / WebView 嵌入时用前两种。
  */
@@ -318,7 +318,7 @@ const API_BASE = (() => {
     const q = new URLSearchParams(location.search).get('api');
     if (q) return q.replace(/\/$/, '');
   } catch (e) {}
-  if (window.__FLOZE_API__) return String(window.__FLOZE_API__).replace(/\/$/, '');
+  if (window.__VESPERINE_API__) return String(window.__VESPERINE_API__).replace(/\/$/, '');
   return '';                       // 同源
 })();
 

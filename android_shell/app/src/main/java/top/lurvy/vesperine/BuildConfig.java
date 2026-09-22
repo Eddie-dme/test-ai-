@@ -1,4 +1,4 @@
-package com.floze.clone;
+package top.lurvy.vesperine;
 
 /**
  * 由 Gradle 生成的文件，这里手工提供（因为本项目用 SDK 原生命令行构建）。
@@ -9,10 +9,10 @@ package com.floze.clone;
  */
 public final class BuildConfig {
     public static final boolean DEBUG = true;
-    public static final String APPLICATION_ID = "com.floze.clone";
+    public static final String APPLICATION_ID = "top.lurvy.vesperine";
     public static final int VERSION_CODE = 1;
     public static final String VERSION_NAME = "0.1.0";
-    public static final String SERVER_URL = "http://192.168.71.82:8080";
+    public static final String SERVER_URL = "http://10.197.7.105:8080";
 
     private BuildConfig() {}
 }

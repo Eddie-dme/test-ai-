@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  FlOZE 复刻 —— WebView 壳
+  Vesperine —— WebView 壳
 
   设计说明：
     这个 App 本质是一个壳，加载运行在测试服务器上的 Web 前端。
-    与原品 FlOZE 的架构一致（它也是「轻原生壳 + WebView 承载业务 UI」，
+    与该品类通用做法 的架构一致（它也是「轻原生壳 + WebView 承载业务 UI」，
     见 Floze复刻开发规格书.md §3.1）。
 
   服务地址通过 BuildConfig.SERVER_URL 注入（见 app/build.gradle），
   也可在 App 内长按标题栏修改（存 SharedPreferences）。
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.floze.clone">
+    package="top.lurvy.vesperine">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />

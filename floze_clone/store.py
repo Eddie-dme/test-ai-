@@ -1,8 +1,8 @@
 """
-FlOZE 复刻 —— 数据层
+Vesperine 复刻 —— 数据层
 
 表结构与字段名严格对齐从 Web bundle 逆向出的真实契约
-（见 floze_reverse/api_contract.txt 与 Floze复刻开发规格书.md §5）。
+（见 floze_reverse/api_contract.txt 与 Vesperine复刻开发规格书.md §5）。
 
   实体        对齐来源
   ---------   -----------------------------------------------------
@@ -341,7 +341,7 @@ def connect(init_schema: bool = True) -> sqlite3.Connection:
 # ------------------------------------------------------------------ 响应封装
 
 def ok(data: Any = None) -> dict:
-    """对齐 FlOZE 响应约定：{flag, msg, data}，flag=0 为成功。"""
+    """对齐 Vesperine 响应约定：{flag, msg, data}，flag=0 为成功。"""
     return {"flag": 0, "msg": "", "data": data}
 
 
@@ -419,7 +419,7 @@ class Store:
             " created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
             (user_id, role_id, role["name"] if role else "", chat_mode, model, ts, ts))
         cid = cur.lastrowid
-        # 开场白：对齐 FlOZE 的 first_message
+        # 开场白：对齐 Vesperine 的 first_message
         if with_intro and role and role["first_message"]:
             self.c.execute(
                 "INSERT INTO messages (chatroom_id, speaker, content, created_at)"
