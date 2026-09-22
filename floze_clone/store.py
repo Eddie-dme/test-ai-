@@ -337,6 +337,20 @@ CREATE TABLE IF NOT EXISTS moderation_events (
     created_at      REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_moderation_user ON moderation_events(user_id, created_at);
+
+-- IAP 订单留痕。
+-- purchase_token 加 UNIQUE：同一个 token 只能兑换一次，
+-- 防客户端重放同一个 token 反复领取。
+CREATE TABLE IF NOT EXISTS iap_purchases (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL,
+    plan_id         TEXT NOT NULL,
+    purchase_token  TEXT NOT NULL UNIQUE,
+    status          TEXT NOT NULL DEFAULT '',   -- verified | failed | compensated
+    note            TEXT NOT NULL DEFAULT '',
+    created_at      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_iap_user ON iap_purchases(user_id, created_at);
 """
 
 
@@ -573,6 +587,29 @@ class Store:
                            (user_id, moment_id))
         self.c.commit()
         return on
+
+    def purchase_seen(self, token: str) -> bool:
+        """该 purchaseToken 是否已处理过（幂等）。"""
+        row = self.c.execute(
+            "SELECT 1 FROM iap_purchases WHERE purchase_token=? LIMIT 1",
+            (token,)).fetchone()
+        return row is not None
+
+    def record_purchase(self, user_id: int, plan_id: str, token: str,
+                        status: str, note: str = "") -> None:
+        """记录一次 IAP 处理结果。
+
+        token 已存在时忽略（UNIQUE 约束）—— 并发重复回调不会重复发放。
+        """
+        try:
+            self.c.execute(
+                "INSERT OR IGNORE INTO iap_purchases"
+                " (user_id, plan_id, purchase_token, status, note, created_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (user_id, plan_id, token, status, note[:200], now()))
+            self.c.commit()
+        except Exception as e:
+            print(f"  ⚠️  IAP 留痕失败: {e}")
 
     def log_moderation(self, user_id: int, field: str, severity: str,
                        reason: str, text: str) -> None:

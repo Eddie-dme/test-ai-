@@ -26,6 +26,7 @@ from pathlib import Path
 import llm
 import affinity
 import moderation
+import iap_verify
 import imagegen
 import tts
 import voices as voice_map
@@ -394,10 +395,10 @@ class API:
             },
         })
 
-    # ---- IAP（stub 模式）----------------------------------------------
-    # 拿到 Google Play 账号且商品配好后，把 PAYMENT_MODE 设为 live，
-    # 并把下面的 stub 发放换成「服务端校验订单通过后再发放」。
-    IAP_PLANS = {f"floze.heart.plan{i}": i * 5 + 5 for i in range(1, 13)}
+    # ---- IAP -----------------------------------------------------------
+    # 商品 ID 带包名前缀：Play Console 里的商品 ID 在应用内全局唯一，
+    # 加前缀可避免以后多应用混淆。改这里必须同步 Play Console 配置。
+    IAP_PLANS = {f"top.lurvy.vesperine.heart.plan{i}": i * 5 + 5 for i in range(1, 13)}
 
     def iap_plans(self) -> dict:
         out = []
@@ -412,17 +413,42 @@ class API:
             return err("unknown plan")
         hearts = self.IAP_PLANS[plan_id]
 
+        # ── 测试模式：直接发放，不需要真实支付 ──
         if PAYMENT_MODE != "live":
             balance = self.s.add_hearts(u["id"], hearts, f"iap_stub:{plan_id}")
             return ok({"planId": plan_id, "hearts": hearts, "balance": balance,
                        "mode": "stub",
                        "notice": "未接入真实支付，仅用于测试环境验证业务逻辑"})
 
-        token = body.get("purchaseToken")
+        # ── 生产模式：必须向 Google 核对 ──
+        token = (body.get("purchaseToken") or "").strip()
         if not token:
             return err("missing purchaseToken")
-        # TODO: 调 Google Play Developer API 校验 token，通过后再发放
-        return err("live 模式尚未接入订单校验", flag=2)
+
+        # 幂等：同一 token 只能兑换一次，否则客户端重放就能刷 hearts
+        if self.s.purchase_seen(token):
+            return err("purchaseToken 已被使用", flag=2)
+
+        sa = iap_verify.service_account()
+        if not sa:
+            return err("服务端未配置 Google Play 凭据", flag=2)
+
+        r = iap_verify.verify_purchase(plan_id, token, sa=sa)
+        if not r.get("ok"):
+            # 失败也留痕，否则同一个假 token 会被无限重试刷日志
+            self.s.record_purchase(u["id"], plan_id, token, "failed",
+                                   str(r.get("error", "")))
+            return err(f"订单校验未通过：{r.get('error') or '状态异常'}", flag=2)
+
+        # 先落库再发放：万一后续步骤崩溃，这条记录可用于对账补偿
+        self.s.record_purchase(u["id"], plan_id, token, "verified", "")
+        balance = self.s.add_hearts(u["id"], hearts, f"iap:{plan_id}")
+
+        # consume：消耗型商品必须标记已消费，
+        # 否则用户买过一次就再也买不了同一档。
+        consumed = iap_verify.consume_purchase(plan_id, token, sa=sa)
+        return ok({"planId": plan_id, "hearts": hearts, "balance": balance,
+                   "mode": "live", "consumed": consumed})
 
     # ---- affinity / hidden chapters --------------------------------
     def affinity_get(self, role_id: int) -> dict:
