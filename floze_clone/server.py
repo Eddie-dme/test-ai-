@@ -1154,7 +1154,14 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/user/settings":       return self._json(api.user_settings())
             if p == "/api/role/mine":           return self._json(api.role_mine())
             if p == "/api/role/list":           return self._json(api.role_list())
-            if p.startswith("/api/role/"):      return self._json(api.role_detail(int(p.rsplit("/", 1)[1])))
+            # 通配路由必须限定为数字 ID。
+            # 若只写 startswith("/api/role/")，/api/role/create 与
+            # /api/role/update 会被它吃掉，int("create") 直接抛 500 ——
+            # 结果就是「创建角色」功能整条不可用。
+            if p.startswith("/api/role/"):
+                _tail = p.rsplit("/", 1)[1]
+                if _tail.isdigit():
+                    return self._json(api.role_detail(int(_tail)))
             if p == "/api/chatMode":            return self._json(api.chat_modes())
             if p == "/api/config":              return self._json(api.config())
             if p == "/api/heart/plans":         return self._json(api.iap_plans())
