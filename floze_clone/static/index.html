@@ -1165,18 +1165,54 @@ $('#input').addEventListener('keydown', e => {
 
 (async function init() {
   if (API_BASE) $('#apiHint').textContent = 'API: ' + API_BASE;
-  const [roles, modes] = await Promise.all([api('/api/role/list'), api('/api/chatMode')]);
-  state.roles = roles.data || [];
-  state.modes = modes.data || [];
-  $('#modeSel').innerHTML = state.modes.map(m =>
-    `<option value="${m.id}">${m.id} · ${m.heartCost}💖</option>`).join('');
-  $('#modeSel').value = 'classic';
-  updateCost();
-  await refreshRooms();
-  renderList();
-  refreshWallet();
-  refreshAd();
+  try {
+    const [roles, modes] = await Promise.all([api('/api/role/list'), api('/api/chatMode')]);
+    state.roles = roles.data || [];
+    state.modes = modes.data || [];
+    $('#modeSel').innerHTML = state.modes.map(m =>
+      `<option value="${m.id}">${m.id} · ${m.heartCost}💖</option>`).join('');
+    $('#modeSel').value = 'classic';
+    updateCost();
+    await refreshRooms();
+    renderList();
+    refreshWallet();
+    refreshAd();
+  } catch (e) {
+    showBootError(e);
+  }
 })();
+
+/* 启动失败：给出可操作的界面，而不是一片空白。
+   手机换网络后服务地址就变了，这里让用户能直接改，不必重装 APK。 */
+function showBootError(err) {
+  const addr = API_BASE || location.origin;
+  const canNative = !!(window.VesperineNative && window.VesperineNative.openServerSettings);
+  const box = document.getElementById('chat');
+  if (!box) return;
+  box.innerHTML =
+    '<div class="empty" style="max-width:330px;line-height:1.95">'
+    + '<div style="font-size:15px;color:var(--ink);margin-bottom:12px">连不上服务器</div>'
+    + '<div style="font-size:12.5px;color:var(--dim);margin-bottom:6px">当前地址</div>'
+    + '<code style="display:block;font-size:11.5px;color:var(--gold);word-break:break-all;'
+    + 'margin-bottom:16px">' + addr + '</code>'
+    + '<div style="font-size:12.5px;color:var(--dim);margin-bottom:18px">'
+    + '请确认手机与电脑在同一网络。<br>如果刚换过网络，服务器地址需要更新。'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">'
+    + (canNative
+        ? '<button class="ghost" id="bootFix" style="padding:8px 16px">修改服务器地址</button>'
+        : '')
+    + '<button class="ghost" id="bootRetry" style="padding:8px 16px">重试</button>'
+    + '</div>'
+    + '<div id="bootErr" style="font-size:11px;color:#6f6885;margin-top:16px"></div>'
+    + '</div>';
+  const errEl = document.getElementById('bootErr');
+  if (errEl) errEl.textContent = String((err && err.message) || err || '');
+  const fix = document.getElementById('bootFix');
+  if (fix) fix.onclick = () => window.VesperineNative.openServerSettings();
+  const retry = document.getElementById('bootRetry');
+  if (retry) retry.onclick = () => location.reload();
+}
 </script>
 </body>
 </html>

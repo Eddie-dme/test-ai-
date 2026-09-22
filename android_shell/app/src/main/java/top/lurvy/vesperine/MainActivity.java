@@ -2,14 +2,17 @@ package top.lurvy.vesperine;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -25,14 +28,15 @@ import android.widget.Toast;
  * Vesperine —— 主 Activity
  *
  * 极简 WebView 壳：
- *   - 加载测试服务器上的 Web 前端
+ *   - 加载内嵌的 Web 前端（assets/www）
  *   - 保留 DOM storage（前端用 localStorage 存偏好）
  *   - 允许 cleartext（测试环境是 http，正式环境应改 https）
- *   - 长按顶部标题栏可修改服务器地址
+ *   - 标题栏右侧有常驻的「服务器设置」按钮；长按标题栏同样可改
+ *   - 暴露 JavascriptInterface，供前端在连不上服务时唤起地址设置
  */
 public class MainActivity extends Activity {
 
-    private static final String PREF = "floze_prefs";
+    private static final String PREF = "vesperine_prefs";
     private static final String KEY_URL = "server_url";
 
     private WebView web;
@@ -47,21 +51,41 @@ public class MainActivity extends Activity {
 
         prefs = getSharedPreferences(PREF, Context.MODE_PRIVATE);
 
-        // ---- 布局：标题条 + 进度条 + WebView ----
+        // ---- 布局：标题栏（标题 + 设置按钮）+ 进度条 + WebView ----
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
 
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setBackgroundColor(Color.parseColor("#161324"));
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+
         title = new TextView(this);
-        title.setBackgroundColor(Color.parseColor("#161324"));
         title.setTextColor(Color.parseColor("#e8e3f5"));
         title.setTextSize(14f);
-        title.setPadding(28, 22, 28, 22);
+        title.setPadding(28, 22, 12, 22);
         title.setText(R.string.app_name);
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         title.setOnLongClickListener(v -> {
             promptForUrl();
             return true;
         });
-        root.addView(title, new LinearLayout.LayoutParams(
+        topBar.addView(title, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        // 常驻设置入口 —— 长按是隐藏手势，用户不可能发现，所以给个显式按钮
+        TextView btnGear = new TextView(this);
+        btnGear.setText("⚙");
+        btnGear.setTextSize(17f);
+        btnGear.setTextColor(Color.parseColor("#9a92b8"));
+        btnGear.setPadding(30, 22, 30, 22);
+        btnGear.setTypeface(Typeface.DEFAULT);
+        btnGear.setOnClickListener(v -> promptForUrl());
+        topBar.addView(btnGear, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        root.addView(topBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -105,6 +129,15 @@ public class MainActivity extends Activity {
                 return true;
             }
         });
+
+        // 前端在连不上服务时可以调 VesperineNative.openServerSettings()
+        // 直接唤起原生的地址设置对话框，不必让用户去猜长按标题栏。
+        web.addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void openServerSettings() {
+                runOnUiThread(MainActivity.this::promptForUrl);
+            }
+        }, "VesperineNative");
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView v, int p) {
@@ -144,7 +177,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** 长按标题栏修改服务器地址（方便换测试机） */
+    /** 修改服务器地址（设置按钮 / 长按标题栏 / 前端桥接三个入口共用） */
     private void promptForUrl() {
         final EditText input = new EditText(this);
         input.setInputType(InputType.TYPE_TEXT_VARIATION_URI);
@@ -152,18 +185,33 @@ public class MainActivity extends Activity {
         input.setSelectAllOnFocus(true);
 
         LinearLayout wrap = new LinearLayout(this);
-        wrap.setPadding(48, 32, 48, 16);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setPadding(48, 28, 48, 8);
+
+        TextView hint = new TextView(this);
+        hint.setText(R.string.server_hint);
+        hint.setTextSize(12.5f);
+        hint.setTextColor(Color.parseColor("#9a92b8"));
+        hint.setPadding(0, 0, 0, 18);
+        wrap.addView(hint);
+
         wrap.addView(input, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        new android.app.AlertDialog.Builder(this)
+        new AlertDialog.Builder(this)
                 .setTitle(R.string.change_server)
                 .setView(wrap)
                 .setPositiveButton(android.R.string.ok, (d, w) -> {
                     String u = input.getText().toString().trim();
+                    if (u.isEmpty()) return;
                     if (!u.startsWith("http")) u = "http://" + u;
                     prefs.edit().putString(KEY_URL, u).apply();
                     loadApp(u);
+                    Toast.makeText(this, R.string.server_saved, Toast.LENGTH_SHORT).show();
+                })
+                .setNeutralButton(R.string.server_reset, (d, w) -> {
+                    prefs.edit().remove(KEY_URL).apply();
+                    loadApp(BuildConfig.SERVER_URL);
                     Toast.makeText(this, R.string.server_saved, Toast.LENGTH_SHORT).show();
                 })
                 .setNegativeButton(android.R.string.cancel, null)
