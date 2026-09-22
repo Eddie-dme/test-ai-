@@ -260,3 +260,169 @@ CHAPTERS = {
                      "\"You may stay. You may also leave. I have stopped caring which.\"")},
     ],
 }
+
+
+# ────────────────────────────────────────────────────────────
+# 情景（Scenarios）
+#
+# 官方情景是「带开场的短剧本」——用户点进去就等于选定了一个
+# 已搭好的舞台。opener 会被拼进首轮 system 上下文。
+# ────────────────────────────────────────────────────────────
+
+SCENARIOS = [
+    {
+        "title": "The Border Crossing",
+        "description": "Two realms have been at war for nine years. You are on the wrong side of a wall that should not exist.",
+        "location": "The Warden's Wall",
+        "category": "slow-burn",
+        "tags": ["enemies", "border", "slow-burn"],
+        "cover": "/generated/portrait-seraphine.jpeg",
+        "opener": (
+            "Scene: dusk on a border wall. The knight on duty has orders to kill anyone "
+            "crossing from your side. She has not drawn her blade."),
+    },
+    {
+        "title": "The Closed Wing",
+        "description": "A duke who has kept one wing of his estate sealed for three hundred years. You have been hired to map it.",
+        "location": "Moonlit Hall",
+        "category": "gothic",
+        "tags": ["vampire", "mystery", "noble"],
+        "cover": "/generated/portrait-lucien.jpeg",
+        "opener": (
+            "Scene: a candlelit hall at midnight. Your employer has just told you the east "
+            "wing is closed, and that you may map everything else. He did not explain why."),
+    },
+    {
+        "title": "The Stopped Clock",
+        "description": "A bride who has been waiting at the altar for three centuries, in a hall where time does not move.",
+        "location": "The Frozen Chapel",
+        "category": "tragic",
+        "tags": ["ghost", "tragic", "romance"],
+        "cover": "/generated/portrait-isolde.jpeg",
+        "opener": (
+            "Scene: a chapel where every clock shows the same minute. The bride turns when "
+            "you enter — the first person to do so in a very long time."),
+    },
+    {
+        "title": "Third Time This Season",
+        "description": "A rival cartographer keeps reaching the ruins before you do. This time you arrive together.",
+        "location": "The Sunken Archive",
+        "category": "rivalry",
+        "tags": ["rival", "adventure", "banter"],
+        "cover": "/generated/portrait-nyx.jpeg",
+        "opener": (
+            "Scene: a flooded archive beneath a ruined city. You both reach the same door at "
+            "the same moment. Neither of you is willing to go first."),
+    },
+    {
+        "title": "The Contract You Should Not Have Taken",
+        "description": "A mercenary captain has been hired to kill you. She has not decided yet whether she will.",
+        "location": "Camp at the Edge of the Map",
+        "category": "tension",
+        "tags": ["mercenary", "tension", "slow-burn"],
+        "cover": "/generated/portrait-rook.jpeg",
+        "opener": (
+            "Scene: a campfire at the edge of a war. The captain has your name on a piece of "
+            "paper in her coat. She is reading it by firelight."),
+    },
+    {
+        "title": "The Sorcerer Who Knows",
+        "description": "Three monarchs have died on this man's advice. You are the fourth to ask for it.",
+        "location": "The Glass Court",
+        "category": "intrigue",
+        "tags": ["sorcerer", "court", "mystery"],
+        "cover": "/generated/portrait-ilias.jpeg",
+        "opener": (
+            "Scene: a court made of glass, where every word has been heard before. The "
+            "sorcerer greets you by a name you have not yet told him."),
+    },
+]
+
+
+# ────────────────────────────────────────────────────────────
+# 官方动态（Moments）
+#
+# 角色以第一人称发帖，像角色自己的社交动态 ——
+# 这比「系统公告」更有代入感，也让动态流不空。
+# ────────────────────────────────────────────────────────────
+
+MOMENTS = [
+    {
+        "role_name": "Lucien",
+        "content": "Three hundred years and the candles in the east wing still burn "
+                   "without being lit. I have stopped asking why. — Lucien",
+        "tags": ["vampire", "gothic"],
+        "like_count": 412,
+    },
+    {
+        "role_name": "Lucien",
+        "content": "Someone asked me today what I miss about being alive. "
+                   "I said the noise. They did not understand.",
+        "tags": ["slow-burn", "melancholy"],
+        "like_count": 287,
+    },
+    {
+        "role_name": "Seraphine",
+        "content": "Nine years guarding a wall I no longer believe in. "
+                   "Still here. Still sharpening it.",
+        "tags": ["knight", "duty"],
+        "like_count": 356,
+    },
+    {
+        "role_name": "Seraphine",
+        "content": "A traveller crossed the border last night and I let them. "
+                   "Do not tell my commander. Do not tell me either — I am trying to forget.",
+        "tags": ["slow-burn", "border"],
+        "like_count": 501,
+    },
+    {
+        "role_name": "Ilias",
+        "content": "I have served three monarchs. Each asked me for a future. "
+                   "Each received one. Only one of them liked the answer.",
+        "tags": ["sorcerer", "court"],
+        "like_count": 274,
+    },
+    {
+        "role_name": "Nyx",
+        "content": "The ruins at Kaer Mor are not empty. I have said this four times. "
+                   "Nobody maps that far. — N.",
+        "tags": ["cartographer", "mystery"],
+        "like_count": 198,
+    },
+    {
+        "role_name": "Isolde",
+        "content": "The clock has not moved. I have not moved. "
+                   "He is very late, but I am patient in a way that living people are not.",
+        "tags": ["ghost", "tragic"],
+        "like_count": 443,
+    },
+    {
+        "role_name": "Rook",
+        "content": "Six wars. Left all of them early. People call that cowardice "
+                   "until they see the ledger.",
+        "tags": ["mercenary", "tension"],
+        "like_count": 231,
+    },
+]
+
+
+# ────────────────────────────────────────────────────────────
+# 角色相册（Album）
+#
+# 用已有的立绘填充，保证新用户点进相册不是空白。
+# ────────────────────────────────────────────────────────────
+
+ALBUMS = [
+    {"role_name": "Lucien",    "file_path": "/generated/portrait-lucien.jpeg",
+     "prompt": "Moonlit hall portrait",    "style": "manhwa_gothic"},
+    {"role_name": "Seraphine", "file_path": "/generated/portrait-seraphine.jpeg",
+     "prompt": "Border wall at dusk",      "style": "manhwa_gothic"},
+    {"role_name": "Ilias",     "file_path": "/generated/portrait-ilias.jpeg",
+     "prompt": "Glass court portrait",     "style": "manhwa_gothic"},
+    {"role_name": "Nyx",       "file_path": "/generated/portrait-nyx.jpeg",
+     "prompt": "Ruins expedition",         "style": "manhwa_gothic"},
+    {"role_name": "Isolde",    "file_path": "/generated/portrait-isolde.jpeg",
+     "prompt": "Frozen chapel bride",      "style": "manhwa_gothic"},
+    {"role_name": "Rook",      "file_path": "/generated/portrait-rook.jpeg",
+     "prompt": "Campfire at the edge",     "style": "manhwa_gothic"},
+]

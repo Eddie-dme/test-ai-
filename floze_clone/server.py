@@ -31,7 +31,8 @@ import imagegen
 import tts
 import voices as voice_map
 from seed_data import (ROLES, CHAPTERS, QUESTS, ACHIEVEMENTS, STICKERS,
-                       ACHIEVEMENT_STICKERS)
+                       ACHIEVEMENT_STICKERS,
+                       SCENARIOS, MOMENTS, ALBUMS)
 from store import Store, connect, ok, err, now
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -132,6 +133,54 @@ def bootstrap(store: Store) -> None:
             "INSERT OR IGNORE INTO free_quota (user_id, type, count, limit_)"
             " VALUES (?,?,0,?)", (u["id"], t, lim))
     store.c.commit()
+
+    # ── 官方内容：让新用户打开时不是三个空白页 ──
+    # 动态与相册挂在当前用户下（数据只有一份），
+    # 但动态带 role_id，前端会显示为「角色发的」；
+    # 情景需要 creators 记录才能显示创作者名。
+    store.c.execute(
+        "INSERT OR IGNORE INTO creators (user_id, display_name, bio, created_at)"
+        " VALUES (?,?,?,?)",
+        (u["id"], "Vesperine",
+         "Official scenarios and characters from the Vesperine team.", now()))
+    store.c.commit()
+
+    _name_to_rid = {r["name"]: r["id"] for r in store.list_roles()}
+
+    # 情景（幂等：按标题去重）
+    if store.c.execute("SELECT COUNT(*) c FROM scenarios").fetchone()["c"] == 0:
+        for s in SCENARIOS:
+            store.c.execute(
+                "INSERT INTO scenarios (creator_id, title, description, location,"
+                " category, cover, tags, opener, is_public, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,1,?)",
+                (u["id"], s["title"], s["description"], s["location"],
+                 s["category"], s["cover"], json.dumps(s["tags"]),
+                 s["opener"], now()))
+        store.c.commit()
+
+    # 官方动态（幂等：按内容去重）
+    if store.c.execute("SELECT COUNT(*) c FROM moments").fetchone()["c"] == 0:
+        for m in MOMENTS:
+            rid = _name_to_rid.get(m["role_name"])
+            store.c.execute(
+                "INSERT INTO moments (user_id, content, role_id, tags,"
+                " like_count, comment_count, created_at)"
+                " VALUES (?,?,?,?,?,0,?)",
+                (u["id"], m["content"], rid, json.dumps(m["tags"]),
+                 m["like_count"], now()))
+        store.c.commit()
+
+    # 角色相册（幂等：按 file_path 去重）
+    if store.c.execute("SELECT COUNT(*) c FROM album_items").fetchone()["c"] == 0:
+        for a in ALBUMS:
+            store.c.execute(
+                "INSERT INTO album_items (user_id, role_id, kind, source,"
+                " file_path, prompt, style, created_at)"
+                " VALUES (?,?,'image','album',?,?,?,?)",
+                (u["id"], _name_to_rid.get(a["role_name"]),
+                 a["file_path"], a["prompt"], a["style"], now()))
+        store.c.commit()
 
 
 class API:
