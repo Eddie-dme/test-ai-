@@ -323,6 +323,20 @@ CREATE TABLE IF NOT EXISTS user_stickers (
     obtained_at     REAL NOT NULL,
     PRIMARY KEY (user_id, sticker_id)
 );
+
+-- 内容安全事件留证。
+-- 只记被拦截的请求，不记正常内容；excerpt 截断后存，
+-- 目的是事发时能自证已尽合理义务，不是收集用户数据。
+CREATE TABLE IF NOT EXISTS moderation_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER,
+    field           TEXT NOT NULL DEFAULT '',   -- 触发位置：message | role_bg | moment | prompt ...
+    severity        TEXT NOT NULL DEFAULT '',   -- csam | other
+    reason          TEXT NOT NULL DEFAULT '',
+    excerpt         TEXT NOT NULL DEFAULT '',   -- 截断的触发片段（≤200 字符）
+    created_at      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_moderation_user ON moderation_events(user_id, created_at);
 """
 
 
@@ -559,6 +573,32 @@ class Store:
                            (user_id, moment_id))
         self.c.commit()
         return on
+
+    def log_moderation(self, user_id: int, field: str, severity: str,
+                       reason: str, text: str) -> None:
+        """记录一次被拦截的内容安全事件（合规留证）。
+
+        excerpt 截断到 200 字符：留证需要能重现判定依据，
+        但不应把违规内容完整落库 —— 那等于自己持有。
+        """
+        self.c.execute(
+            "INSERT INTO moderation_events"
+            " (user_id, field, severity, reason, excerpt, created_at)"
+            " VALUES (?,?,?,?,?,?)",
+            (user_id, field, severity, reason, (text or "")[:200], now()))
+        self.c.commit()
+
+    def moderation_count(self, user_id: int, severity: str | None = None) -> int:
+        """某用户的违规次数（可用于分级处置）。"""
+        if severity:
+            row = self.c.execute(
+                "SELECT COUNT(*) AS n FROM moderation_events"
+                " WHERE user_id=? AND severity=?", (user_id, severity)).fetchone()
+        else:
+            row = self.c.execute(
+                "SELECT COUNT(*) AS n FROM moderation_events WHERE user_id=?",
+                (user_id,)).fetchone()
+        return int(row["n"]) if row else 0
 
     def add_comment(self, moment_id: int, user_id: int, content: str) -> dict:
         cur = self.c.execute(

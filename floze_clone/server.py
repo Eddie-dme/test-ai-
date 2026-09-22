@@ -25,6 +25,7 @@ from pathlib import Path
 
 import llm
 import affinity
+import moderation
 import imagegen
 import tts
 import voices as voice_map
@@ -262,6 +263,28 @@ class API:
         return ok({"summary": s})
 
     # ---- moment（动态流）----------------------------------------------
+    # ---------- 内容安全 ----------
+    def _screen(self, *texts, field: str = "") -> dict | None:
+        """内容安全护栏。返回 None 表示通过；否则返回错误响应。
+
+        多个字段（如角色创建的 background + firstMessage）合并后再判定，
+        避免跨字段的违规组合被逐个检查时漏掉。
+        留证失败不影响拦截本身 —— 宁可少一条记录，不能不拦。
+        """
+        blob = "\n".join(t for t in texts if t)
+        r = moderation.screen(blob, field=field)
+        if not r.get("blocked"):
+            return None
+        try:
+            u = self.s.ensure_user()
+            self.s.log_moderation(u["id"], field, r["severity"], r["reason"], blob)
+            n = self.s.moderation_count(u["id"], "csam")
+            print(f"  ⚠️  内容拦截 user={u['id']} field={field} "
+                  f"severity={r['severity']} csam累计={n}")
+        except Exception as e:
+            print(f"  ⚠️  留证写入失败（拦截仍生效）: {e}")
+        return err(moderation.refusal_message(r["severity"]))
+
     def moment_list(self) -> dict:
         u = self.s.ensure_user()
         return ok(self.s.list_moments(u["id"]))
@@ -272,6 +295,9 @@ class API:
         content = (body.get("content") or "").strip()
         if not content:
             return err("empty content")
+        blocked = self._screen(content, field="moment")
+        if blocked:
+            return blocked
         cost = MOMENT_COST["post"]
 
         # 1) 免费额度
@@ -331,6 +357,9 @@ class API:
             return err("moment not found")
         if not content:
             return err("empty content")
+        blocked = self._screen(content, field="moment_comment")
+        if blocked:
+            return blocked
         cost = MOMENT_COST["comment"]
         info = self.s.heart_info(u["id"])
         if info["amount"] < cost:
@@ -751,6 +780,16 @@ class API:
         if len(tags) > self.ROLE_LIMITS["tags"]:
             return err(f"too many tags (max {self.ROLE_LIMITS['tags']})")
 
+        # 角色设定是公开内容，且会被反复用于生成对话，
+        # 因此 background / firstMessage / description 合并判定
+        blocked = self._screen(
+            bg, fm,
+            body.get("description", ""),
+            body.get("personality", ""),
+            field="role_create")
+        if blocked:
+            return blocked
+
         cur = self.s.c.execute(
             "INSERT INTO roles (name, description, personality, background,"
             " first_message, status_bar, tags, creator, created_at)"
@@ -884,6 +923,12 @@ class API:
                 text = row["content"]
         if not text:
             return err("message not found or empty")
+
+        # 朗读也走护栏：模型可能生成了边界内容，
+        # 手动传入 text 试听时同样要拦。
+        blocked = self._screen(text, field="speech")
+        if blocked:
+            return blocked
 
         if not role_name and cid:
             cr = self.s.c.execute(
@@ -1180,11 +1225,20 @@ class Handler(BaseHTTPRequestHandler):
     def _stream_send(self, api: API):
         store = api.s
         body = self._body()
+
+        # 内容安全 —— 必须在扣费之前。
+        # 若放在 prepare_send 之后，被拦截的消息已经把 hearts 扣了，
+        # 用户会因为一次拒绝而被白扣费。
+        _text = (body.get("text") or "").strip()
+        _blocked = api._screen(_text, field="message")
+        if _blocked:
+            return self._json(_blocked)
+
         chatroom, cost, ad_funded, e = api.prepare_send(body)
         if e:
             return self._json(e)
 
-        text = (body.get("text") or "").strip()
+        text = _text
         cid = chatroom["id"]
         store.add_message(cid, "user", text, cost, ad_funded)
         store.touch_chatroom(cid)
