@@ -1128,10 +1128,25 @@ function switchTab(t) {
   $('#composer').style.display = (inOverlay || inChapters) ? 'none' : 'block';
   $('#chatTools').style.display = inOverlay ? 'none' : 'flex';
   $('#feed').style.display = inOverlay ? 'flex' : 'none';
-  if (inFeed) { $('#who').textContent = '动态'; $('#sub').textContent = '创作者的动态'; setHero(null); renderFeed(); }
-  else if (t === 'scenario') { $('#who').textContent = '情景'; $('#sub').textContent = '选一个情景开聊'; setHero(null); renderScenarios(); }
-  else if (t === 'album') { $('#who').textContent = '相册'; $('#sub').textContent = 'AI 生成的角色图像'; setHero(null); renderAlbum(); }
-  else if (inChapters) { $('#who').textContent = (state.role ? state.role.name : '') + ' · 隐藏章节'; $('#sub').textContent = '好感度驱动解锁'; setHero(state.role ? state.role.name : null); renderChapters(); }
+  // 窄屏下选完 tab 就该收起抽屉，否则用户看不到内容
+  if (typeof navOpen === 'function') navOpen(false);
+  if (t === 'feed') {
+    $('#who').textContent = '动态'; $('#sub').textContent = '创作者的动态';
+    setHero(null); renderFeed();
+  }
+  else if (t === 'scenario') {
+    $('#who').textContent = '情景'; $('#sub').textContent = '选一个情景开聊';
+    setHero(null); renderScenarios();
+  }
+  else if (t === 'album') {
+    $('#who').textContent = '相册'; $('#sub').textContent = 'AI 生成的角色图像';
+    setHero(null); renderAlbum();
+  }
+  else if (inChapters) {
+    $('#who').textContent = (state.role ? state.role.name : '') + ' · 隐藏章节';
+    $('#sub').textContent = '好感度驱动解锁';
+    setHero(state.role ? state.role.name : null); renderChapters();
+  }
   else { setHero(null); renderList(); }
 }
 async function refreshRooms() {
