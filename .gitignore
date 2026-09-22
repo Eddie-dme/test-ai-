@@ -86,3 +86,7 @@ service-account*.json
 # 探针缓存
 # ─────────────────────────────────────────────────────────
 .probe/
+
+# 图标选型时的对比图（调试产物，非产品素材）
+docs/assets/icon-options*.png
+*.probe
