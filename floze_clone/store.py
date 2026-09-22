@@ -351,6 +351,28 @@ CREATE TABLE IF NOT EXISTS iap_purchases (
     created_at      REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_iap_user ON iap_purchases(user_id, created_at);
+
+-- 举报（UGC 产品的上架硬门槛）。
+-- Apple Review Guidelines 与 Google Play 政策都要求 UGC 应用
+-- 提供举报与屏蔽机制，否则直接拒审。
+--
+-- snapshot 存举报当时的内容快照：事后内容可能被删除或修改，
+-- 没有快照就无法复核工单。截断存储，避免完整落库违规内容。
+-- UNIQUE 约束：同一人对同一目标重复举报只记一次，防刷。
+CREATE TABLE IF NOT EXISTS reports (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    reporter_id     INTEGER NOT NULL,
+    target_type     TEXT NOT NULL,            -- role | moment | comment | user | album | scenario
+    target_id       INTEGER NOT NULL,
+    reason          TEXT NOT NULL,            -- csam | sexual | violence | hate | harassment | spam | ip | other
+    detail          TEXT NOT NULL DEFAULT '',
+    snapshot        TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'pending',  -- pending | reviewed | actioned | dismissed
+    priority        TEXT NOT NULL DEFAULT 'normal',   -- normal | urgent（csam 自动升级）
+    created_at      REAL NOT NULL,
+    UNIQUE(reporter_id, target_type, target_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, priority, created_at);
 """
 
 
@@ -611,8 +633,59 @@ class Store:
         except Exception as e:
             print(f"  ⚠️  IAP 留痕失败: {e}")
 
-    def log_moderation(self, user_id: int, field: str, severity: str,
-                       reason: str, text: str) -> None:
+    # ---- 举报 ----------------------------------------------------
+
+    def create_report(self, reporter_id: int, target_type: str, target_id: int,
+                      reason: str, detail: str = "", snapshot: str = "") -> dict:
+        """提交举报。
+
+        csam 自动升级为 urgent —— 这类工单必须在人工队列里排到最前。
+        同一人对同一目标重复举报只记一次（UNIQUE 约束），返回已有记录。
+        """
+        priority = "urgent" if reason == "csam" else "normal"
+        try:
+            cur = self.c.execute(
+                "INSERT INTO reports (reporter_id, target_type, target_id, reason,"
+                " detail, snapshot, priority, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (reporter_id, target_type, target_id, reason,
+                 (detail or "")[:1000], (snapshot or "")[:500], priority, now()))
+            self.c.commit()
+            return {"id": cur.lastrowid, "duplicate": False, "priority": priority}
+        except sqlite3.IntegrityError:
+            row = self.c.execute(
+                "SELECT id, priority FROM reports"
+                " WHERE reporter_id=? AND target_type=? AND target_id=?",
+                (reporter_id, target_type, target_id)).fetchone()
+            return {"id": row["id"] if row else 0, "duplicate": True,
+                    "priority": row["priority"] if row else priority}
+
+    def report_queue(self, status: str = "pending", limit: int = 100) -> list[dict]:
+        """待处理工单，urgent 优先。"""
+        rows = self.c.execute(
+            "SELECT * FROM reports WHERE status=?"
+            " ORDER BY CASE priority WHEN 'urgent' THEN 0 ELSE 1 END, id"
+            " LIMIT ?", (status, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def report_counts(self) -> dict:
+        """工单统计（各状态计数 + 待处理的紧急数）。"""
+        out = {"pending": 0, "urgent": 0, "actioned": 0, "dismissed": 0}
+        for r in self.c.execute(
+                "SELECT status, COUNT(*) c FROM reports GROUP BY status").fetchall():
+            out[r["status"]] = r["c"]
+        row = self.c.execute(
+            "SELECT COUNT(*) c FROM reports"
+            " WHERE status='pending' AND priority='urgent'").fetchone()
+        out["urgent"] = row["c"] if row else 0
+        return out
+
+    def resolve_report(self, report_id: int, status: str) -> bool:
+        """处置工单。status: reviewed | actioned | dismissed"""
+        self.c.execute("UPDATE reports SET status=? WHERE id=?", (status, report_id))
+        self.c.commit()
+        return self.c.total_changes > 0
+
+    def log_moderation(self, user_id: int, field: str, severity: str,                       reason: str, text: str) -> None:
         """记录一次被拦截的内容安全事件（合规留证）。
 
         excerpt 截断到 200 字符：留证需要能重现判定依据，

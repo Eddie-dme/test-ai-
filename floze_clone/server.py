@@ -444,6 +444,94 @@ class API:
             },
         })
 
+    # ---- 举报 ----------------------------------------------------------
+    # Apple Review Guidelines 与 Google Play 政策都要求 UGC 应用
+    # 提供举报与屏蔽，这是上架硬门槛。
+
+    REPORT_REASONS = [
+        {"id": "csam",       "label": "涉及未成年人", "urgent": True},
+        {"id": "sexual",     "label": "不当性内容"},
+        {"id": "violence",   "label": "暴力或血腥"},
+        {"id": "hate",       "label": "仇恨或歧视"},
+        {"id": "harassment", "label": "骚扰或霸凌"},
+        {"id": "spam",       "label": "垃圾信息"},
+        {"id": "ip",         "label": "侵权"},
+        {"id": "other",      "label": "其他"},
+    ]
+    REPORT_TARGETS = {"role", "moment", "comment", "user", "album", "scenario"}
+
+    def report_reasons(self) -> dict:
+        """举报原因选项（前端弹窗用）。"""
+        return ok(self.REPORT_REASONS)
+
+    def _report_snapshot(self, ttype: str, tid: int) -> str:
+        """举报当时的内容快照。
+
+        内容事后可能被删除或修改，没快照就无法复核工单。
+        取不到就算了 —— 不能因为快照失败而拒绝用户的举报。
+        """
+        try:
+            if ttype == "moment":
+                r = self.s.get_moment(tid)
+                return (r or {}).get("content", "") or ""
+            if ttype == "role":
+                r = self.s.get_role(tid)
+                if r:
+                    return f"{r.get('name','')}: {r.get('description','')}"
+            if ttype == "comment":
+                row = self.s.c.execute(
+                    "SELECT content FROM moment_comments WHERE id=?", (tid,)).fetchone()
+                return row["content"] if row else ""
+            if ttype == "scenario":
+                row = self.s.c.execute(
+                    "SELECT title, description FROM scenarios WHERE id=?", (tid,)).fetchone()
+                return f"{row['title']}: {row['description']}" if row else ""
+        except Exception:
+            pass
+        return ""
+
+    def report_create(self, body: dict) -> dict:
+        u = self.s.ensure_user()
+        ttype = (body.get("targetType") or "").strip()
+        try:
+            tid = int(body.get("targetId", 0))
+        except (TypeError, ValueError):
+            return err("invalid targetId")
+        reason = (body.get("reason") or "").strip()
+        detail = (body.get("detail") or "").strip()
+
+        if ttype not in self.REPORT_TARGETS:
+            return err("invalid targetType")
+        if not tid:
+            return err("missing targetId")
+        if reason not in {r["id"] for r in self.REPORT_REASONS}:
+            return err("invalid reason")
+
+        snap = self._report_snapshot(ttype, tid)
+        r = self.s.create_report(u["id"], ttype, tid, reason, detail, snap)
+        if r["priority"] == "urgent":
+            print(f"  🚨 紧急举报 id={r['id']} type={ttype} target={tid} "
+                  f"user={u['id']}（涉未成年人内容，优先处理）")
+        return ok({"id": r["id"], "duplicate": r["duplicate"],
+                   "priority": r["priority"]})
+
+    def report_queue(self) -> dict:
+        """待处理工单。注：production 必须加管理员鉴权。"""
+        return ok({"counts": self.s.report_counts(),
+                   "items": self.s.report_queue()})
+
+    def report_resolve(self, body: dict) -> dict:
+        """处置工单。status: reviewed | actioned | dismissed"""
+        try:
+            rid = int(body.get("reportId", 0))
+        except (TypeError, ValueError):
+            return err("invalid reportId")
+        status = (body.get("status") or "").strip()
+        if status not in ("reviewed", "actioned", "dismissed"):
+            return err("invalid status")
+        self.s.resolve_report(rid, status)
+        return ok({"reportId": rid, "status": status})
+
     # ---- IAP -----------------------------------------------------------
     # 商品 ID 带包名前缀：Play Console 里的商品 ID 在应用内全局唯一，
     # 加前缀可避免以后多应用混淆。改这里必须同步 Play Console 配置。
@@ -1207,6 +1295,9 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/moment/tag-role-candidates": return self._json(api.moment_tag_candidates())
             if p == "/api/moment/comment/list":
                 return self._json(api.moment_comments(int(qs.get("momentId", [0])[0])))
+            # 举报：查询类走 GET，提交与处置走 POST
+            if p == "/api/report/reasons":     return self._json(api.report_reasons())
+            if p == "/api/report/queue":       return self._json(api.report_queue())
         except Exception as e:
             return self._json(err(f"server error: {e}", 500), 500)
         if p.startswith("/generated/") or p.startswith("/speech/"):
@@ -1259,6 +1350,10 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/creator/block/update":
                 b = self._body()          # 注意：只能读一次，rfile 读完就空
                 return self._json(api.block_action(b, b.get("blocked", True)))
+            if p == "/api/report/create":
+                return self._json(api.report_create(self._body()))
+            if p == "/api/report/resolve":
+                return self._json(api.report_resolve(self._body()))
             if p == "/api/role/create":
                 return self._json(api.role_create(self._body()))
             if p == "/api/role/update":

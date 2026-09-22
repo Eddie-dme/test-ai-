@@ -652,6 +652,73 @@ async function send() {
   refreshWallet(); refreshAd();
 }
 
+/* ---------- 举报（UGC 产品上架必需）----------
+   用自建弹窗而非 window.prompt —— WebView 默认不渲染原生 prompt，
+   在 App 里会静默失败。 */
+async function openReport(targetType, targetId) {
+  const r = await api('/api/report/reasons');
+  const reasons = r.data || [];
+  if (!reasons.length) return toast('举报服务暂不可用');
+
+  const mask = document.createElement('div');
+  mask.style.cssText =
+    'position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:200;'
+    + 'display:flex;align-items:center;justify-content:center;padding:24px';
+  mask.innerHTML =
+    '<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;'
+    + 'padding:20px;width:100%;max-width:340px;max-height:76vh;overflow-y:auto">'
+    + '<div style="font-size:15px;font-weight:600;margin-bottom:4px">举报</div>'
+    + '<div style="font-size:12px;color:var(--dim);margin-bottom:14px">'
+    + '请选择原因。恶意举报会被记录。</div>'
+    + '<div id="rlist"></div>'
+    + '<textarea id="rdetail" placeholder="补充说明（可留空）" '
+    + 'style="width:100%;height:54px;margin-top:10px;background:var(--panel2);color:var(--ink);'
+    + 'border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:12.5px"></textarea>'
+    + '<div style="display:flex;gap:8px;margin-top:14px">'
+    + '<button class="ghost" id="rcancel" style="flex:1;padding:10px">取消</button>'
+    + '<button class="act" id="rsubmit" style="flex:1;height:auto;padding:10px">提交</button>'
+    + '</div>'
+    + '<div id="rerr" style="font-size:11.5px;color:var(--rose);margin-top:9px"></div>'
+    + '</div>';
+  document.body.appendChild(mask);
+
+  let picked = '';
+  const listBox = mask.querySelector('#rlist');
+  reasons.forEach(x => {
+    const b = document.createElement('div');
+    b.textContent = x.label + (x.urgent ? ' ⚠' : '');
+    b.style.cssText =
+      'padding:10px 12px;margin-bottom:6px;border-radius:8px;cursor:pointer;font-size:13px;'
+      + 'background:var(--panel2);border:1px solid var(--line)';
+    b.onclick = () => {
+      picked = x.id;
+      [...listBox.children].forEach(el => {
+        el.style.borderColor = 'var(--line)';
+        el.style.color = '';
+      });
+      b.style.borderColor = 'var(--rose)';
+      b.style.color = 'var(--rose)';
+    };
+    listBox.appendChild(b);
+  });
+
+  const close = () => mask.remove();
+  mask.querySelector('#rcancel').onclick = close;
+  mask.onclick = e => { if (e.target === mask) close(); };
+  mask.querySelector('#rsubmit').onclick = async () => {
+    const errEl = mask.querySelector('#rerr');
+    if (!picked) { errEl.textContent = '请先选择一个原因'; return; }
+    const detail = mask.querySelector('#rdetail').value.trim();
+    const rr = await api('/api/report/create', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ targetType, targetId, reason: picked, detail })
+    });
+    if (rr.flag !== 0) { errEl.textContent = rr.msg || '提交失败'; return; }
+    close();
+    toast(rr.data && rr.data.duplicate ? '你已经举报过了' : '举报已提交，我们会尽快处理');
+  };
+}
+
 /* ---------- 广场（动态流）---------- */
 async function renderFeed() {
   const box = $('#feed');
@@ -701,6 +768,7 @@ async function renderFeed() {
         <span data-a="like" class="${m.liked ? 'on' : ''}">♥ ${m.like_count}</span>
         <span data-a="cmt">💬 ${m.comment_count}</span>
         <span data-a="save" class="${m.saved ? 'on' : ''}">${m.saved ? '★ 已收藏' : '☆ 收藏'}</span>
+        <span data-a="report" style="margin-left:auto;opacity:.55;font-size:11.5px">⚑ 举报</span>
       </div>
       <div class="cmt" style="display:none"></div>`;
 
@@ -712,14 +780,14 @@ async function renderFeed() {
       });
       if (rr.flag === 0) renderFeed();
     };
-    c.querySelector('[data-a=save]').onclick = async () => {
-      const on = !m.saved;
+    c.querySelector('[data-a=save]').onclick = async () => {      const on = !m.saved;
       await api('/api/moment/' + (on ? 'save' : 'unsave'), {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ momentId: m.id })
       });
       renderFeed();
     };
+    c.querySelector('[data-a=report]').onclick = () => openReport('moment', m.id);
     c.querySelector('[data-a=cmt]').onclick = async () => {
       const box2 = c.querySelector('.cmt');
       if (box2.style.display === 'block') { box2.style.display = 'none'; return; }
