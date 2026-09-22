@@ -1153,6 +1153,9 @@ $('#scrim').onclick = () => navOpen(false);
    桌面（有 hover 能力）保留 Enter / Shift+Enter 说明。 */
 if (window.matchMedia && window.matchMedia('(hover: none)').matches) {
   $('#input').placeholder = '说点什么…';
+  // 触屏没有「左侧栏」这个概念，引导语要指向 ☰ 按钮
+  const _empty = document.querySelector('#chat .empty');
+  if (_empty) _empty.textContent = '点击左上角 ☰ 选择角色';
 }
 $('#send').onclick = send;
 $('#modeSel').onchange = updateCost;
