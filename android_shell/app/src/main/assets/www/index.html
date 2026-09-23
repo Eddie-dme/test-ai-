@@ -240,6 +240,13 @@
   .gen .row2{display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap}
   .busy{display:inline-block;width:12px;height:12px;border:2px solid var(--dim);
         border-top-color:var(--rose);border-radius:50%;animation:spin .8s linear infinite}
+  /* ---- 窄屏主区列表 ---- */
+  .mainlist{overflow-y:auto;flex:1;padding:10px 12px 18px}
+  .mainlist .item{background:var(--panel);border:1px solid var(--line);
+        border-radius:12px;margin-bottom:8px}
+  .mainlist .item:last-child{margin-bottom:0}
+  .mainlist .empty{padding:40px 0;text-align:center;color:var(--dim);font-size:13px}
+
   /* ---- 账号区 ---- */
   .userbox{margin-top:auto;padding:12px 14px 14px;border-top:1px solid var(--line);
         display:flex;flex-direction:column;gap:7px}
@@ -538,6 +545,7 @@ async function refreshRoles() {
 }
 
 async function renderRoleDetail(role) {
+  exitOverlay();           // 窄屏：从列表切回聊天视图
   const box = $('#chat');
   box.innerHTML = '';
   const d = await api('/api/role/' + role.id);
@@ -577,43 +585,77 @@ async function renderRoleDetail(role) {
   };
 }
 
-function renderList() {
-  const l = $('#list'); l.innerHTML = '';
-  if (state.tab === 'roles') {
-    // 创建入口
-    const add = document.createElement('div');
-    add.className = 'item';
-    add.style.cssText = 'color:var(--rose);font-size:13px;padding:12px 16px';
-    add.textContent = '+ 创建角色';
-    add.onclick = () => { navOpen(false); openRoleForm(); };
-    l.appendChild(add);
+/* 列表填充逻辑抽出来，侧栏（桌面/抽屉）与主区（窄屏）共用同一份。 */
+function fillRolesInto(box) {
+  const add = document.createElement('div');
+  add.className = 'item';
+  add.style.cssText = 'color:var(--rose);font-size:13px;padding:12px 16px';
+  add.textContent = '+ 创建角色';
+  add.onclick = () => { navOpen(false); openRoleForm(); };
+  box.appendChild(add);
 
-    state.roles.forEach(r => {
-      const d = document.createElement('div');
-      d.className = 'item';
-      // 立绘：约定文件名 portrait-<name>.jpeg，缺失时自动隐藏
-      const face = `${API_BASE}/generated/portrait-${r.name.toLowerCase()}.jpeg`;
-      d.innerHTML = `<img class="face" src="${face}" alt="${r.name}"
-          loading="lazy" onerror="this.style.display='none'">
-        <div style="min-width:0;flex:1">
-          <div class="n">${r.name}</div>
-          <div class="d">${r.description}</div>
-          <div class="tags">${(r.tags||[]).slice(0,3).map(t=>`<span>${t}</span>`).join('')}</div>
-        </div>`;
-      d.onclick = () => { navOpen(false); renderRoleDetail(r); };
-      l.appendChild(d);
-    });
-  } else {
-    if (!state.rooms.length) { l.innerHTML = '<div class="empty">还没有会话</div>'; return; }
-    state.rooms.forEach(c => {
-      const d = document.createElement('div');
-      d.className = 'item' + (state.chatroom && state.chatroom.id === c.id ? ' on' : '');
-      d.innerHTML = `<div class="n">${c.role_name}</div>
-        <div class="d">${c.chat_mode} · ${new Date(c.updated_at*1000).toLocaleString()}</div>`;
-      d.onclick = () => { navOpen(false); openRoom(c); };
-      l.appendChild(d);
-    });
+  state.roles.forEach(r => {
+    const d = document.createElement('div');
+    d.className = 'item';
+    // 立绘：约定文件名 portrait-<name>.jpeg，缺失时自动隐藏
+    const face = `${API_BASE}/generated/portrait-${r.name.toLowerCase()}.jpeg`;
+    d.innerHTML = `<img class="face" src="${face}" alt="${r.name}"
+        loading="lazy" onerror="this.style.display='none'">
+      <div style="min-width:0;flex:1">
+        <div class="n">${r.name}</div>
+        <div class="d">${r.description}</div>
+        <div class="tags">${(r.tags||[]).slice(0,3).map(t=>`<span>${t}</span>`).join('')}</div>
+      </div>`;
+    d.onclick = () => { navOpen(false); renderRoleDetail(r); };
+    box.appendChild(d);
+  });
+}
+
+function fillRoomsInto(box) {
+  if (!state.rooms.length) {
+    box.innerHTML = '<div class="empty">还没有会话</div>';
+    return;
   }
+  state.rooms.forEach(c => {
+    const d = document.createElement('div');
+    d.className = 'item' + (state.chatroom && state.chatroom.id === c.id ? ' on' : '');
+    d.innerHTML = `<div class="n">${c.role_name}</div>
+      <div class="d">${c.chat_mode} · ${new Date(c.updated_at*1000).toLocaleString()}</div>`;
+    d.onclick = () => { navOpen(false); openRoom(c); };
+    box.appendChild(d);
+  });
+}
+
+function renderList() {
+  const l = $('#list');
+  l.innerHTML = '';
+  if (state.tab === 'roles') fillRolesInto(l);
+  else fillRoomsInto(l);
+}
+
+function isNarrow() {
+  return window.matchMedia('(max-width:820px)').matches;
+}
+
+/* 窄屏下侧栏藏在抽屉里，角色列表直接放主区 ——
+   否则新用户打开应用只看到空聊天区，得先想到点左上角的 ☰。 */
+function renderMainList() {
+  const feed = $('#feed');
+  feed.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'mainlist';
+  if (state.tab === 'roles') fillRolesInto(wrap);
+  else fillRoomsInto(wrap);
+  feed.appendChild(wrap);
+}
+
+/* 从 overlay（列表/动态/情景/相册）切回聊天视图。 */
+function exitOverlay() {
+  if (!isNarrow()) return;
+  $('#feed').style.display = 'none';
+  $('#chat').style.display = 'flex';
+  $('#composer').style.display = 'block';
+  $('#chatTools').style.display = 'flex';
 }
 
 /* ---------- 开始 / 打开会话 ---------- */
@@ -642,9 +684,13 @@ function setHero(roleName) {
   el.onerror = () => { el.style.display = 'none'; };
   el.onload = () => { el.style.display = 'block'; };
   el.src = url;
+  // 给 src 赋同样的值不会重新触发 load 事件，缓存命中时 onload 永不执行，
+  // display 就卡在初始的 none 上。这里补一次「已加载完成」检查。
+  if (el.complete && el.naturalWidth > 0) el.style.display = 'block';
 }
 
 function openRoom(c) {
+  exitOverlay();           // 窄屏：从列表切回聊天视图
   state.chatroom = c;
   state.role = state.roles.find(r => r.id === c.role_id);
   $('#who').textContent = c.role_name;
@@ -1306,7 +1352,9 @@ function switchTab(t) {
   $('#tabFeed').classList.toggle('on', t === 'feed');
   $('#tabScen').classList.toggle('on', t === 'scenario');
   $('#tabAlbum').classList.toggle('on', t === 'album');
-  const inOverlay = (t === 'feed' || t === 'scenario' || t === 'album');
+  // 窄屏下角色/会话列表也放主区（侧栏在抽屉里，不点 ☰ 看不到）
+  const listInMain = isNarrow() && (t === 'roles' || t === 'rooms');
+  const inOverlay = (t === 'feed' || t === 'scenario' || t === 'album' || listInMain);
   const inChapters = (t === 'chapters');
   $('#chat').style.display = (inOverlay) ? 'none' : 'flex';
   $('#composer').style.display = (inOverlay || inChapters) ? 'none' : 'block';
@@ -1330,6 +1378,13 @@ function switchTab(t) {
     $('#who').textContent = (state.role ? state.role.name : '') + ' · 隐藏章节';
     $('#sub').textContent = '好感度驱动解锁';
     setHero(state.role ? state.role.name : null); renderChapters();
+  }
+  else if (listInMain) {
+    $('#who').textContent = (t === 'roles') ? '角色' : '会话';
+    $('#sub').textContent = (t === 'roles') ? '选一个开始对话' : '继续你的故事';
+    setHero(null);
+    renderList();          // 侧栏（抽屉里）也保持一致
+    renderMainList();      // 主区展示
   }
   else { setHero(null); renderList(); }
 }
@@ -1356,6 +1411,16 @@ if (window.matchMedia && window.matchMedia('(hover: none)').matches) {
   const _empty = document.querySelector('#chat .empty');
   if (_empty) _empty.textContent = '点击左上角 ☰ 选择角色';
 }
+/* 宽窄切换时重排列表：从窄屏转宽屏要把角色列表从主区撤回侧栏，
+   反之亦然。只在断点跨越时动作，避免无谓重绘。 */
+let _wasNarrow = isNarrow();
+window.addEventListener('resize', () => {
+  const now = isNarrow();
+  if (now === _wasNarrow) return;
+  _wasNarrow = now;
+  if (state.tab === 'roles' || state.tab === 'rooms') switchTab(state.tab);
+});
+
 $('#send').onclick = send;
 $('#modeSel').onchange = updateCost;
 $('#input').addEventListener('keydown', e => {
@@ -1498,7 +1563,9 @@ async function loadAppData() {
   $('#modeSel').value = 'classic';
   updateCost();
   await refreshRooms();
-  renderList();
+  // 走 switchTab 而不是直接 renderList()：窄屏下「列表放主区」的
+  // 分支在 switchTab 里，绕过它会导致首屏仍是空聊天区。
+  switchTab('roles');
   refreshWallet();
   refreshAd();
   renderAccount();
