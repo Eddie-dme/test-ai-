@@ -19,6 +19,7 @@ import hmac
 import json
 import os
 import sys
+import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -43,6 +44,37 @@ GENERATED_DIR = STATIC / "generated"      # 生成的图片落盘目录（静态
 # 未配置时跳过校验（方便本地开发）；生产环境必须设置。
 # 静态资源（前端页面、立绘）不受保护，否则前端自身都加载不了。
 ACCESS_KEY = os.environ.get("ACCESS_KEY", "").strip()
+
+# 限流 —— 每个来源 IP 每分钟允许的 /api/* 请求数。
+# 目的不是替代认证，而是防止未认证请求被无限刷（认证挡住的是数据，
+# 限流挡住的是资源）。设为 0 可关闭。
+RATE_LIMIT_PER_MIN = int(os.environ.get("RATE_LIMIT_PER_MIN", "120"))
+
+_rate_hits: dict = {}
+_rate_lock = threading.Lock()
+
+
+def rate_allow(ip: str) -> bool:
+    """朴素滑动窗口。单进程内存实现，够用且无外部依赖。
+
+    注意：进程重启计数清零；多实例部署时各自独立计数。
+    """
+    if RATE_LIMIT_PER_MIN <= 0:
+        return True
+    now = time.time()
+    cutoff = now - 60.0
+    with _rate_lock:
+        hits = _rate_hits.setdefault(ip, [])
+        while hits and hits[0] < cutoff:
+            hits.pop(0)
+        if len(hits) >= RATE_LIMIT_PER_MIN:
+            return False
+        hits.append(now)
+        # 顺手清理长期不活跃的条目，避免字典无界增长
+        if len(_rate_hits) > 4096:
+            for k in [k for k, v in _rate_hits.items() if not v or v[-1] < cutoff]:
+                _rate_hits.pop(k, None)
+        return True
 SPEECH_DIR = STATIC / "speech"            # 语音落盘目录（静态可访问）
 
 import os as _os
@@ -1268,6 +1300,8 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         p, qs = u.path, urllib.parse.parse_qs(u.query)
         if p.startswith("/api/"):
+            if not rate_allow(self.client_address[0]):
+                return self._json({"flag": 1, "msg": "RATE_LIMITED"}, 429)
             if not self._authorized():
                 return self._json({"flag": 1, "msg": "UNAUTHORIZED"}, 401)
             api = self._api()
@@ -1342,8 +1376,11 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- POST
     def do_POST(self):
         p = urllib.parse.urlparse(self.path).path
-        if p.startswith("/api/") and not self._authorized():
-            return self._json({"flag": 1, "msg": "UNAUTHORIZED"}, 401)
+        if p.startswith("/api/"):
+            if not rate_allow(self.client_address[0]):
+                return self._json({"flag": 1, "msg": "RATE_LIMITED"}, 429)
+            if not self._authorized():
+                return self._json({"flag": 1, "msg": "UNAUTHORIZED"}, 401)
         api = self._api()
         try:
             if p == "/api/chatroom":
