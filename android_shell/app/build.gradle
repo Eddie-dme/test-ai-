@@ -15,7 +15,7 @@ android {
 
         // ★ 测试服务器地址：改成你跑 server.py 那台机器的局域网 IP
         //   可在 App 内长按标题栏临时修改（不重打包）
-        buildConfigField "String", "SERVER_URL", "\"http://192.168.71.82:8080\""
+        buildConfigField "String", "SERVER_URL", "\"http://3.107.124.47:8080\""
     }
 
     buildTypes {

@@ -12,7 +12,7 @@ public final class BuildConfig {
     public static final String APPLICATION_ID = "top.lurvy.vesperine";
     public static final int VERSION_CODE = 1;
     public static final String VERSION_NAME = "0.1.0";
-    public static final String SERVER_URL = "http://10.197.7.105:8080";
+    public static final String SERVER_URL = "http://3.107.124.47:8080";
 
     private BuildConfig() {}
 }
