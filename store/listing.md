@@ -1,7 +1,10 @@
-# Vesperine — Google Play 上架文案
+# Vesperine — 商店上架文案
 
-> 字数限制：标题 ≤30 字符、简短说明 ≤80 字符、完整说明 ≤4000 字符。
-> 下列各项均已按限制核对。
+Google Play 与 App Store 两套元数据。字数限制已逐项核对。
+
+---
+
+# Google Play
 
 ## 应用名称（≤30）
 
@@ -64,22 +67,87 @@ Terms: https://lurvy.top/terms.html
 
 约 2,150 字符。
 
-## 待确认项
+---
 
-- 隐私政策 / 服务条款 URL 是否已绑定到 `lurvy.top`（`docs/` 里的
-  `privacy.html` / `terms.html` 已就绪，取决于 GitHub Pages 域名是否解析）。
-  Play 后台必须填一个可公开访问的隐私政策地址，否则无法提交。
-- 内容分级问卷：本应用为虚构角色扮演，含浪漫情节但无成人内容，
-  建议按「社交 / 角色扮演」类目如实填写。
+# App Store
+
+## App 名称（≤30）
+
+```
+Vesperine: AI Romantasy Chat
+```
+
+28 字符（与 Play 保持一致）。
+
+## 副标题（≤30）
+
+```
+Characters who remember you
+```
+
+27 字符。
+
+## 关键词（≤100，逗号分隔，逗号后不加空格）
+
+```
+ai roleplay,ai chat,romantasy,character ai,visual novel,otome,fantasy story,ai companion
+```
+
+88 字符。刻意不放 `dating`、`girlfriend`、`waifu` 这类词 —— 容易被归到成人向类目或被拒。
+
+## 促销文本（≤170）
+
+```
+Six characters at launch — each with their own voice, memory, and secrets. Hidden chapters unlock as your bond grows.
+```
+
+115 字符。
+
+## 描述（≤4000）
+
+直接复用上面的 Play 完整说明，App Store 没有额外限制。
+
+## 分级与合规备注
+
+- 内容分级问卷按「角色扮演 / 社交」如实填写，标注含浪漫主题但无成人内容
+- App Store 对 UGC 应用要求举报机制与屏蔽能力 —— 已在应用内实现
+- 描述与截图中不应出现真人肖像或第三方 IP，当前素材均为原创生成
 
 ---
 
-## 素材文件
+# 素材清单
 
-| 用途 | 文件 | 规格 |
-| --- | --- | --- |
-| 应用图标 | `icon-512.png` | 512×512 PNG |
-| 特色图片 | `feature-graphic.png` | 1024×500 PNG |
-| 手机截图 1–5 | `screenshots/01-chat.png` … `05-detail.png` | 1080×1920 PNG |
+图标与特色图片：
 
-截图顺序对应卖点：长期记忆 → 情景模式 → 图像生成 → 角色动态 → 角色深度。
+- `icon-1024.png` — App Store 图标，1024×1024，**不含 alpha 通道**（含透明会被 App Store 拒收）
+- `icon-512.png` — Google Play 图标，512×512
+- `feature-graphic.png` — Google Play 特色图片，1024×500（App Store 无此项）
+
+截图（三套内容相同，画布不同）：
+
+- `screenshots/play/` — 1080×1920，5 张（Play 要求宽高比 ≤2:1，此处 1.78）
+- `screenshots/ios-6.7/` — 1290×2796，5 张
+- `screenshots/ios-6.9/` — 1320×2868，5 张
+
+顺序对应卖点：长期记忆 → 情景模式 → 图像生成 → 角色动态 → 角色深度。
+
+---
+
+# 待确认项
+
+**隐私政策与服务条款目前还不能用于提交。**
+
+`docs/privacy.html`、`docs/terms.html` 里仍有 8 处法律信息占位符未填：
+
+- `[LEGAL ENTITY NAME]` — 4 处（privacy ×2、terms ×2）
+- `[REGISTERED ADDRESS]` — 3 处
+- `[JURISDICTION]` — 2 处
+- `[HOSTING REGION]`、`[PROVIDER REGION]` — 各 1 处
+
+另有 `docs/index.html` 1 处 `[GITHUB_USER]/[REPO_NAME]`。
+
+这两件事都需要先落地，Play 与 App Store 的提交都会被它卡住：
+
+1. 填入上述法律信息（公司注册名、注册地址、管辖地、服务器区域）
+2. 隐私政策要点公开可访问 —— 取决于 `lurvy.top` 是否已解析到 GitHub Pages，
+   且本仓库尚未配置 git 远端，无法推送

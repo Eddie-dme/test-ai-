@@ -1,0 +1,47 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;padding:0;width:1024px;height:1024px;overflow:hidden}
+  .ic{width:1024px;height:1024px;position:relative;overflow:hidden;
+      display:flex;align-items:center;justify-content:center;
+      background:radial-gradient(68% 58% at 50% 42%,#46326a 0%,#281e3e 42%,#0e0c16 100%)}
+</style></head>
+<body>
+<div class="ic">
+  <div style="position:absolute;width:716px;height:716px;border-radius:50%;left:154px;top:154px;
+              background:radial-gradient(circle,rgba(232,124,152,.22) 0%,rgba(201,106,138,.07) 46%,transparent 72%)"></div>
+  <svg width="1024" height="1024" viewBox="0 0 100 100">
+    <defs>
+      <linearGradient id="gs" x1="0.15" y1="0" x2="0.62" y2="1">
+        <stop offset="0%" stop-color="#f7e6ba"/>
+        <stop offset="46%" stop-color="#d8b46a"/>
+        <stop offset="100%" stop-color="#c46d8c"/>
+      </linearGradient>
+      <radialGradient id="gh" cx="0.42" cy="0.34">
+        <stop offset="0%" stop-color="#fffdf7"/>
+        <stop offset="62%" stop-color="#ffeccf"/>
+        <stop offset="100%" stop-color="#f7d9a8"/>
+      </radialGradient>
+      <filter id="bl" x="-60%" y="-60%" width="220%" height="220%">
+        <feGaussianBlur stdDeviation="2.2"/>
+      </filter>
+    </defs>
+
+    <!-- 外光晕 -->
+    <path filter="url(#bl)" opacity=".48" fill="url(#gs)"
+      d="M50 16 C52.6 37 62.5 47 83 50 C62.5 53 52.6 62.8 50 84
+         C47.4 62.8 37.5 53 17 50 C37.5 47 47.4 37 50 16 Z"/>
+
+    <!-- 星芒主体 -->
+    <path fill="url(#gs)"
+      d="M50 18 C52.4 38 61.8 47.4 81 50 C61.8 52.6 52.4 62 50 82
+         C47.6 62 38.2 52.6 19 50 C38.2 47.4 47.6 38 50 18 Z"/>
+
+    <!-- 中心的心 -->
+    <path fill="url(#gh)"
+      d="M50 66 C50 66 36.5 55.6 36.5 47.6 C36.5 42 40.9 38 45.6 38
+         C48.3 38 49.6 39.3 50 40.7 C50.4 39.3 51.7 38 54.4 38
+         C59.1 38 63.5 42 63.5 47.6 C63.5 55.6 50 66 50 66 Z"/>
+  </svg>
+</div>
+</body></html>
