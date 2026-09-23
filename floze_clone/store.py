@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+
+import auth
 from pathlib import Path
 from typing import Any
 
@@ -36,8 +38,26 @@ CREATE TABLE IF NOT EXISTS users (
     persona_desc    TEXT DEFAULT '',
     hearts          INTEGER NOT NULL DEFAULT 0,
     unlimited_until TEXT DEFAULT '',      -- unlimitedHeartsExpiredAt
+    email           TEXT,                 -- 登录邮箱（归一化后的小写）
+    password_hash   TEXT,                 -- scrypt$salt$hash，见 auth.py
     created_at      REAL NOT NULL
 );
+
+-- 邮箱唯一。用部分索引，只为有邮箱的行建约束 ——
+-- 改造前的匿名用户 email 为 NULL，不能互相冲突。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email
+    ON users(email) WHERE email IS NOT NULL;
+
+-- 访问令牌。独立成表而非塞进 users，这样一个账号可多端登录、
+-- 也能单独吊销某一端。
+CREATE TABLE IF NOT EXISTS auth_tokens (
+    token           TEXT PRIMARY KEY,
+    user_id         INTEGER NOT NULL,
+    created_at      REAL NOT NULL,
+    expires_at      REAL NOT NULL,
+    last_used_at    REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id);
 
 CREATE TABLE IF NOT EXISTS roles (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -380,10 +400,27 @@ def now() -> float:
     return time.time()
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """为已存在的旧库补列。
+
+    CREATE TABLE IF NOT EXISTS 对已建好的表不会生效，所以新增字段
+    必须显式 ALTER。每次启动跑一遍，幂等。
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+    for col, ddl in (("email", "TEXT"), ("password_hash", "TEXT")):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
+    conn.commit()
+
+
 def connect(init_schema: bool = True) -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     if init_schema:
+        # 必须先补列：SCHEMA 里的 idx_users_email 索引引用 email 列，
+        # 而 CREATE TABLE IF NOT EXISTS 对已存在的表不会生效 ——
+        # 顺序倒过来的话，旧库会在建索引时报 no such column。
+        _migrate(conn)
         conn.executescript(SCHEMA)          # 幂等
     return conn
 
@@ -402,11 +439,24 @@ def err(msg: str, flag: int = 1) -> dict:
 # ------------------------------------------------------------------ 业务方法
 
 class Store:
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: sqlite3.Connection, user_id: int | None = None):
         self.c = conn
+        # 当前请求所属用户。None 表示未指定 —— 用于本地开发与改造前的
+        # 匿名数据，此时 ensure_user() 回退到第一个用户。
+        self.user_id = user_id
 
     # ---- user -------------------------------------------------------
     def ensure_user(self) -> dict:
+        """返回当前请求的用户。
+
+        已登录（self.user_id 有值）时按 id 取；否则回退到第一个用户，
+        保持与改造前一致的行为，旧的匿名数据仍可访问。
+        """
+        if self.user_id is not None:
+            row = self.c.execute(
+                "SELECT * FROM users WHERE id=?", (self.user_id,)).fetchone()
+            if row:
+                return dict(row)
         row = self.c.execute("SELECT * FROM users ORDER BY id LIMIT 1").fetchone()
         if row:
             return dict(row)
@@ -418,6 +468,73 @@ class Store:
              30, now()))
         self.c.commit()
         return self.ensure_user()
+
+    # ---- 认证 -------------------------------------------------------
+
+    def user_by_email(self, email: str) -> dict | None:
+        row = self.c.execute(
+            "SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        return dict(row) if row else None
+
+    def create_user(self, email: str, password_hash: str,
+                    nickname: str = "Traveller", persona_name: str = "",
+                    persona_desc: str = "") -> dict:
+        """新建账号。其余配额表沿用懒初始化（INSERT OR IGNORE），无需在此建。"""
+        cur = self.c.execute(
+            "INSERT INTO users (nickname, persona_name, persona_desc, hearts,"
+            " email, password_hash, created_at) VALUES (?,?,?,?,?,?,?)",
+            (nickname, persona_name, persona_desc, 30,
+             email, password_hash, now()))
+        uid = cur.lastrowid
+        self.c.commit()
+        return dict(self.c.execute(
+            "SELECT * FROM users WHERE id=?", (uid,)).fetchone())
+
+    def set_password(self, user_id: int, password_hash: str) -> None:
+        self.c.execute("UPDATE users SET password_hash=? WHERE id=?",
+                       (password_hash, user_id))
+        self.c.commit()
+
+    def create_token(self, user_id: int, ttl_seconds: int) -> str:
+        token = auth.new_token()
+        t = now()
+        self.c.execute(
+            "INSERT INTO auth_tokens (token, user_id, created_at, expires_at,"
+            " last_used_at) VALUES (?,?,?,?,?)",
+            (token, user_id, t, t + ttl_seconds, t))
+        self.c.commit()
+        return token
+
+    def user_id_by_token(self, token: str) -> int | None:
+        """校验令牌，返回 user_id。过期即删除并返回 None。"""
+        if not token:
+            return None
+        row = self.c.execute(
+            "SELECT user_id, expires_at FROM auth_tokens WHERE token=?",
+            (token,)).fetchone()
+        if not row:
+            return None
+        if row["expires_at"] < now():
+            self.revoke_token(token)
+            return None
+        self.c.execute("UPDATE auth_tokens SET last_used_at=? WHERE token=?",
+                       (now(), token))
+        self.c.commit()
+        return row["user_id"]
+
+    def revoke_token(self, token: str) -> None:
+        self.c.execute("DELETE FROM auth_tokens WHERE token=?", (token,))
+        self.c.commit()
+
+    def revoke_all_tokens(self, user_id: int) -> None:
+        """吊销某用户全部令牌 —— 改密码后应调用。"""
+        self.c.execute("DELETE FROM auth_tokens WHERE user_id=?", (user_id,))
+        self.c.commit()
+
+    def prune_expired_tokens(self) -> int:
+        cur = self.c.execute("DELETE FROM auth_tokens WHERE expires_at < ?", (now(),))
+        self.c.commit()
+        return cur.rowcount
 
     def add_hearts(self, user_id: int, delta: int, reason: str) -> int:
         self.c.execute("UPDATE users SET hearts = MAX(0, hearts + ?) WHERE id=?",

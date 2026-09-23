@@ -240,9 +240,61 @@
   .gen .row2{display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap}
   .busy{display:inline-block;width:12px;height:12px;border:2px solid var(--dim);
         border-top-color:var(--rose);border-radius:50%;animation:spin .8s linear infinite}
+  /* ---- 登录界面 ---- */
+  .authgate{position:fixed;inset:0;z-index:200;display:flex;
+        align-items:center;justify-content:center;padding:22px;
+        background:radial-gradient(120% 70% at 50% 0%,#2c2350 0%,#14102a 40%,#0d0b14 70%)}
+  .authcard{width:100%;max-width:380px;background:var(--panel);
+        border:1px solid var(--line);border-radius:16px;padding:26px 24px 22px;
+        box-shadow:0 30px 80px rgba(0,0,0,.6)}
+  .authbrand{text-align:center;margin-bottom:20px}
+  .authbrand h1{margin:0;font-size:26px;letter-spacing:.04em;
+        background:linear-gradient(180deg,#fff 12%,#e6c98d 78%,#d8b46a 100%);
+        -webkit-background-clip:text;background-clip:text;
+        -webkit-text-fill-color:transparent;color:#e6c98d}
+  .authbrand p{margin:5px 0 0;font-size:12.5px;color:var(--dim)}
+  .authmsg{min-height:18px;margin-bottom:12px;font-size:12.5px;
+        color:var(--rose);text-align:center;line-height:1.5}
+  .authmsg.ok{color:var(--ok)}
+  .authlabel{display:block;font-size:11.5px;color:var(--dim);
+        margin:12px 0 6px;letter-spacing:.03em}
+  .authinput{width:100%;height:42px;background:var(--panel2);color:var(--ink);
+        border:1px solid var(--line);border-radius:9px;padding:0 12px;
+        font:inherit;font-size:14px}
+  .authinput:focus{outline:none;border-color:var(--rose)}
+  .authbtn{width:100%;height:44px;margin-top:20px;border:none;border-radius:10px;
+        background:linear-gradient(180deg,#d4799a,#c96a8a);color:#fff;
+        font:inherit;font-size:15px;font-weight:600;cursor:pointer}
+  .authbtn:disabled{opacity:.55;cursor:default}
+  .authlink{display:block;width:100%;margin-top:14px;background:none;border:none;
+        color:var(--dim);font:inherit;font-size:12.5px;cursor:pointer;
+        text-decoration:underline;text-underline-offset:3px}
+  .authlink:hover{color:var(--ink)}
 </style>
 </head>
 <body>
+
+<!-- 登录 / 注册。未持有有效令牌时遮住整个界面 ——
+     服务端除 /api/auth/* 外都要求登录，否则未登录设备会全部落到
+     同一个匿名用户上，多用户隔离就形同虚设。 -->
+<div id="authGate" class="authgate" style="display:none">
+  <div class="authcard">
+    <div class="authbrand">
+      <h1>Vesperine</h1>
+      <p>Romantasy AI Chat</p>
+    </div>
+    <div id="authMsg" class="authmsg"></div>
+    <label class="authlabel" for="authEmail">Email</label>
+    <input id="authEmail" class="authinput" type="email" autocomplete="email"
+           placeholder="you@example.com">
+    <label class="authlabel" for="authPass">Password</label>
+    <input id="authPass" class="authinput" type="password"
+           autocomplete="current-password" placeholder="At least 8 characters">
+    <button id="authSubmit" class="authbtn">Sign in</button>
+    <button id="authSwitch" class="authlink">Create a new account</button>
+  </div>
+</div>
+
 <div class="app">
   <aside>
     <div class="brand">
@@ -333,10 +385,21 @@ const ACCESS_KEY = (() => {
   return window.__VESPERINE_KEY__ ? String(window.__VESPERINE_KEY__) : '';
 })();
 
-/** 统一构造请求头：在调用方给的头之上附加访问密钥。 */
+/* 访问令牌 —— 存 localStorage，比内存变量耐页面刷新；
+ * APK 侧已开启 DOM storage，重启应用也还在。 */
+const TOKEN_KEY = 'vesperine_token';
+const AUTH_TOKEN = {
+  get() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } },
+  set(v) { try { localStorage.setItem(TOKEN_KEY, v); } catch (e) {} },
+  clear() { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+};
+
+/** 统一构造请求头：附加 app 访问密钥与用户令牌。 */
 function authHeaders(extra) {
   const h = Object.assign({}, extra || {});
   if (ACCESS_KEY) h['X-Access-Key'] = ACCESS_KEY;
+  const t = AUTH_TOKEN.get();
+  if (t) h['Authorization'] = 'Bearer ' + t;
   return h;
 }
 
@@ -347,7 +410,15 @@ async function api(path, opts) {
   const o = Object.assign({}, opts);
   o.headers = authHeaders(o.headers);
   const r = await fetch(API_BASE + path, o);
-  return r.json();
+  const data = await r.json();
+  // 令牌失效：清掉并退回登录界面。认证端点本身除外 ——
+  // 登录失败返回的也是 401 语义，不能因此递归弹窗。
+  if (r.status === 401 && data && data.msg === 'UNAUTHORIZED'
+      && !path.startsWith('/api/auth/')) {
+    AUTH_TOKEN.clear();
+    showAuthGate(authErrorText('UNAUTHORIZED'));
+  }
+  return data;
 }
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('on');
@@ -1266,20 +1337,102 @@ $('#input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });
 
+/* ---------- 认证界面 ---------- */
+let authMode = 'login';                       // 'login' | 'register'
+
+function authErrorText(msg) {
+  return ({
+    INVALID_EMAIL: 'That email address does not look right.',
+    WEAK_PASSWORD: 'Password must be at least 8 characters.',
+    EMAIL_TAKEN: 'That email is already registered — try signing in.',
+    INVALID_CREDENTIALS: 'Email or password is incorrect.',
+    UNAUTHORIZED: 'Your session expired. Please sign in again.',
+    RATE_LIMITED: 'Too many attempts. Please wait a minute and retry.'
+  })[msg] || ('Something went wrong: ' + msg);
+}
+
+function showAuthGate(msg, ok) {
+  $('#authGate').style.display = 'flex';
+  const el = $('#authMsg');
+  el.textContent = msg || '';
+  el.className = 'authmsg' + (ok ? ' ok' : '');
+  $('#authSubmit').disabled = false;
+  $('#authSubmit').textContent = authMode === 'login' ? 'Sign in' : 'Create account';
+  $('#authSwitch').textContent = authMode === 'login'
+    ? 'Create a new account' : 'I already have an account';
+}
+
+function hideAuthGate() { $('#authGate').style.display = 'none'; }
+
+async function submitAuth() {
+  const email = $('#authEmail').value.trim();
+  const password = $('#authPass').value;
+  if (!email || !password) { showAuthGate('Please fill in both fields.'); return; }
+
+  $('#authSubmit').disabled = true;
+  try {
+    const r = await api(authMode === 'login' ? '/api/auth/login' : '/api/auth/register', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email, password })
+    });
+    if (r.flag !== 0) { showAuthGate(authErrorText(r.msg)); return; }
+    AUTH_TOKEN.set(r.data.token);
+    state.user = r.data.user;
+    $('#authPass').value = '';
+    hideAuthGate();
+    await loadAppData();
+  } catch (e) {
+    showAuthGate('Cannot reach the server. Check your connection.');
+  } finally {
+    $('#authSubmit').disabled = false;
+  }
+}
+
+$('#authSubmit').onclick = submitAuth;
+$('#authSwitch').onclick = () => {
+  authMode = authMode === 'login' ? 'register' : 'login';
+  showAuthGate('');
+};
+$('#authPass').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); submitAuth(); }
+});
+$('#authEmail').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); $('#authPass').focus(); }
+});
+
+/** 有有效令牌就直接进；否则显示登录界面并等用户操作。 */
+async function ensureAuth() {
+  if (!AUTH_TOKEN.get()) { showAuthGate(''); return false; }
+  try {
+    const r = await api('/api/auth/me');
+    if (r.flag === 0) { state.user = r.data; return true; }
+  } catch (e) { /* 网络异常也回落到登录界面 */ }
+  AUTH_TOKEN.clear();
+  showAuthGate('Your session expired. Please sign in again.');
+  return false;
+}
+
+/** 登录后的数据装载。 */
+async function loadAppData() {
+  const [roles, modes] = await Promise.all([api('/api/role/list'), api('/api/chatMode')]);
+  state.roles = roles.data || [];
+  state.modes = modes.data || [];
+  $('#modeSel').innerHTML = state.modes.map(m =>
+    `<option value="${m.id}">${m.id} · ${m.heartCost}💖</option>`).join('');
+  $('#modeSel').value = 'classic';
+  updateCost();
+  await refreshRooms();
+  renderList();
+  refreshWallet();
+  refreshAd();
+}
+
 (async function init() {
   if (API_BASE) $('#apiHint').textContent = 'API: ' + API_BASE;
   try {
-    const [roles, modes] = await Promise.all([api('/api/role/list'), api('/api/chatMode')]);
-    state.roles = roles.data || [];
-    state.modes = modes.data || [];
-    $('#modeSel').innerHTML = state.modes.map(m =>
-      `<option value="${m.id}">${m.id} · ${m.heartCost}💖</option>`).join('');
-    $('#modeSel').value = 'classic';
-    updateCost();
-    await refreshRooms();
-    renderList();
-    refreshWallet();
-    refreshAd();
+    if (!await ensureAuth()) return;         // 用户登录后由 submitAuth 继续
+    await loadAppData();
   } catch (e) {
     showBootError(e);
   }

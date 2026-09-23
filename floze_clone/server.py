@@ -25,6 +25,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import auth
 import llm
 import affinity
 import moderation
@@ -1225,8 +1226,78 @@ class Handler(BaseHTTPRequestHandler):
 
         ThreadingHTTPServer 为每个请求开新线程，而 sqlite3 默认禁止跨线程
         复用连接（check_same_thread）。因此每请求新建连接。
+
+        顺带解析 Bearer 令牌得到 user_id —— 复用同一个连接，不开第二次。
         """
-        return API(Store(connect(init_schema=False)))
+        store = Store(connect(init_schema=False))
+        store.user_id = store.user_id_by_token(self._bearer_token())
+        return API(store)
+
+    # ---------- 认证
+
+    def _bearer_token(self) -> str:
+        """从 Authorization 头取令牌。"""
+        header = self.headers.get("Authorization", "") if self.headers else ""
+        if header.startswith("Bearer "):
+            return header[7:].strip()
+        return ""
+
+    @staticmethod
+    def _public_user(u: dict) -> dict:
+        """对外暴露的用户字段 —— 刻意不含 email 与 password_hash。"""
+        return {
+            "id": u.get("id"),
+            "nickname": u.get("nickname", ""),
+            "avatar": u.get("avatar", ""),
+            "personaName": u.get("persona_name", ""),
+            "personaDesc": u.get("persona_desc", ""),
+            "hearts": u.get("hearts", 0),
+        }
+
+    def _register(self, body: dict) -> dict:
+        email = auth.normalize_email(body.get("email", ""))
+        password = body.get("password") or ""
+        if not auth.looks_like_email(email):
+            return err("INVALID_EMAIL")
+        if len(password) < 8:
+            return err("WEAK_PASSWORD")
+        if len(password) > 200:
+            return err("WEAK_PASSWORD")
+        store = Store(connect(init_schema=False))
+        if store.user_by_email(email):
+            return err("EMAIL_TAKEN")
+        nickname = (body.get("nickname") or "").strip()[:40] or email.split("@")[0][:40]
+        user = store.create_user(
+            email, auth.hash_password(password), nickname=nickname,
+            persona_name=(body.get("personaName") or "").strip()[:40],
+            persona_desc=(body.get("personaDesc") or "").strip()[:500])
+        token = store.create_token(user["id"], auth.TOKEN_TTL_SECONDS)
+        return ok({"token": token, "user": self._public_user(user)})
+
+    def _login(self, body: dict) -> dict:
+        email = auth.normalize_email(body.get("email", ""))
+        password = body.get("password") or ""
+        store = Store(connect(init_schema=False))
+        user = store.user_by_email(email)
+        # 不区分「用户不存在」与「密码错误」，避免邮箱枚举
+        if not user or not auth.verify_password(password, user.get("password_hash") or ""):
+            return err("INVALID_CREDENTIALS")
+        token = store.create_token(user["id"], auth.TOKEN_TTL_SECONDS)
+        return ok({"token": token, "user": self._public_user(user)})
+
+    def _logout(self) -> dict:
+        token = self._bearer_token()
+        if token:
+            Store(connect(init_schema=False)).revoke_token(token)
+        return ok(None)
+
+    def _me(self) -> dict:
+        store = Store(connect(init_schema=False))
+        uid = store.user_id_by_token(self._bearer_token())
+        if not uid:
+            return err("UNAUTHORIZED")
+        store.user_id = uid
+        return ok(self._public_user(store.ensure_user()))
 
     # ---------- 工具
     def _json(self, payload: dict, code: int = 200):
@@ -1305,9 +1376,14 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authorized():
                 return self._json({"flag": 1, "msg": "UNAUTHORIZED"}, 401)
             api = self._api()
+            # 除认证端点外都要求登录 —— 否则未登录设备会全部落到
+            # 同一个匿名用户上，多用户隔离就形同虚设。
+            if not p.startswith("/api/auth/") and not api.s.user_id:
+                return self._json(err("UNAUTHORIZED"), 401)
         else:
             api = None
         try:
+            if p == "/api/auth/me":             return self._json(self._me())
             if p == "/api/user/settings":       return self._json(api.user_settings())
             if p == "/api/role/mine":           return self._json(api.role_mine())
             if p == "/api/role/list":           return self._json(api.role_list())
@@ -1382,7 +1458,15 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authorized():
                 return self._json({"flag": 1, "msg": "UNAUTHORIZED"}, 401)
         api = self._api()
+        if p.startswith("/api/") and not p.startswith("/api/auth/") and not api.s.user_id:
+            return self._json(err("UNAUTHORIZED"), 401)
         try:
+            if p == "/api/auth/register":
+                return self._json(self._register(self._body()))
+            if p == "/api/auth/login":
+                return self._json(self._login(self._body()))
+            if p == "/api/auth/logout":
+                return self._json(self._logout())
             if p == "/api/chatroom":
                 return self._json(api.chatroom_create(self._body()))
             if p == "/api/ad/reward":
