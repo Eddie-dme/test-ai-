@@ -1285,6 +1285,19 @@ class Handler(BaseHTTPRequestHandler):
         token = store.create_token(user["id"], auth.TOKEN_TTL_SECONDS)
         return ok({"token": token, "user": self._public_user(user)})
 
+    def _delete_account(self) -> dict:
+        """删除当前账号及其全部数据。
+
+        商店审核要求应用内可自助删除，且必须真的清空关联数据 ——
+        只删 users 行会留下孤儿记录，既不合规也是隐私残留。
+        """
+        store = Store(connect(init_schema=False))
+        uid = store.user_id_by_token(self._bearer_token())
+        if not uid:
+            return err("UNAUTHORIZED")
+        counts = store.delete_user(uid)
+        return ok({"deleted": counts})
+
     def _logout(self) -> dict:
         token = self._bearer_token()
         if token:
@@ -1467,6 +1480,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._login(self._body()))
             if p == "/api/auth/logout":
                 return self._json(self._logout())
+            if p == "/api/auth/delete":
+                return self._json(self._delete_account())
             if p == "/api/chatroom":
                 return self._json(api.chatroom_create(self._body()))
             if p == "/api/ad/reward":

@@ -240,6 +240,21 @@
   .gen .row2{display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap}
   .busy{display:inline-block;width:12px;height:12px;border:2px solid var(--dim);
         border-top-color:var(--rose);border-radius:50%;animation:spin .8s linear infinite}
+  /* ---- 账号区 ---- */
+  .userbox{margin-top:auto;padding:12px 14px 14px;border-top:1px solid var(--line);
+        display:flex;flex-direction:column;gap:7px}
+  .ub-who{font-size:12px;color:var(--dim);margin-bottom:2px;overflow:hidden;
+        text-overflow:ellipsis;white-space:nowrap}
+  .ub-who span{color:var(--ink)}
+  .ub-btn{height:32px;border-radius:8px;background:var(--panel2);
+        border:1px solid var(--line);color:var(--dim);font:inherit;font-size:12.5px;
+        cursor:pointer}
+  .ub-btn:hover{color:var(--ink);border-color:#3d3558}
+  .ub-danger{color:var(--rose);border-color:rgba(201,106,138,.3)}
+  .ub-danger.armed{background:rgba(201,106,138,.16);color:#f0a4bd;
+        border-color:var(--rose)}
+  .ub-note{font-size:10.5px;color:#6f6885;line-height:1.5}
+
   /* ---- 登录界面 ---- */
   .authgate{position:fixed;inset:0;z-index:200;display:flex;
         align-items:center;justify-content:center;padding:22px;
@@ -313,6 +328,16 @@
       <button id="tabAlbum">相册</button>
     </div>
     <div class="list" id="list"></div>
+
+    <!-- 账号区。放在侧栏底部，窄屏下随抽屉一起出现。 -->
+    <div class="userbox">
+      <div class="ub-who">
+        <span id="userName">—</span>
+      </div>
+      <button class="ub-btn" id="btnSignOut">Sign out</button>
+      <button class="ub-btn ub-danger" id="btnDeleteAccount">Delete account</button>
+      <div class="ub-note">Deleting erases your conversations, memories and hearts.</div>
+    </div>
   </aside>
 
   <main>
@@ -1364,6 +1389,56 @@ function showAuthGate(msg, ok) {
 
 function hideAuthGate() { $('#authGate').style.display = 'none'; }
 
+/* ---------- 账号操作 ---------- */
+
+function renderAccount() {
+  const u = state.user || {};
+  $('#userName').textContent = u.nickname || (u.id ? 'User #' + u.id : '—');
+}
+
+$('#btnSignOut').onclick = async () => {
+  try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* 网络失败也照样本地登出 */ }
+  AUTH_TOKEN.clear();
+  delete state.user;
+  location.reload();
+};
+
+/* 删除账号用「两次点击」而非 confirm() —— WebView 默认不实现
+   onJsConfirm/onJsPrompt，原生对话框不会弹出来，点了没反应。 */
+let deleteArmed = false;
+let deleteTimer = null;
+
+$('#btnDeleteAccount').onclick = async () => {
+  const btn = $('#btnDeleteAccount');
+  if (!deleteArmed) {
+    deleteArmed = true;
+    btn.classList.add('armed');
+    btn.textContent = 'Tap again to confirm';
+    deleteTimer = setTimeout(() => {
+      deleteArmed = false;
+      btn.classList.remove('armed');
+      btn.textContent = 'Delete account';
+    }, 6000);
+    return;
+  }
+  clearTimeout(deleteTimer);
+  deleteArmed = false;
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
+  try {
+    const r = await api('/api/auth/delete', { method: 'POST' });
+    if (r.flag !== 0) throw new Error(r.msg || 'failed');
+    AUTH_TOKEN.clear();
+    delete state.user;
+    location.reload();
+  } catch (e) {
+    btn.disabled = false;
+    btn.classList.remove('armed');
+    btn.textContent = 'Delete account';
+    toast('Could not delete account: ' + e.message);
+  }
+};
+
 async function submitAuth() {
   const email = $('#authEmail').value.trim();
   const password = $('#authPass').value;
@@ -1426,6 +1501,7 @@ async function loadAppData() {
   renderList();
   refreshWallet();
   refreshAd();
+  renderAccount();
 }
 
 (async function init() {

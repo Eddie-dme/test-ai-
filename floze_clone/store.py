@@ -526,6 +526,53 @@ class Store:
         self.c.execute("DELETE FROM auth_tokens WHERE token=?", (token,))
         self.c.commit()
 
+    # 删除账号时要清空的表。顺序无关（都是按 user_id 平铺删除），
+    # 但 messages 例外 —— 它没有 user_id，得靠 chatroom 间接定位。
+    _USER_SCOPED_TABLES = (
+        "auth_tokens", "heart_ledger", "ad_quota", "free_quota",
+        "moments", "moment_likes", "moment_saves", "moment_comments",
+        "role_affinity", "chapter_unlocks", "affinity_log", "scenario_likes",
+        "creators", "creator_blocks", "follow_reads", "album_items",
+        "user_quests", "user_achievements", "notifications", "user_stickers",
+        "moderation_events", "iap_purchases",
+    )
+
+    def delete_user(self, user_id: int) -> dict:
+        """删除账号及其全部关联数据，返回各表删除行数。
+
+        商店审核要求应用内提供账号删除能力，且必须真的清掉数据 ——
+        只把 users 行删掉、留下孤儿数据既不合规也会留下隐私残留。
+        """
+        counts: dict = {}
+
+        # messages 没有 user_id，先按该用户的 chatroom 定位并删除，
+        # 否则 chatrooms 删掉后就再也找不到它们了。
+        cur = self.c.execute(
+            "DELETE FROM messages WHERE chatroom_id IN"
+            " (SELECT id FROM chatrooms WHERE user_id=?)", (user_id,))
+        if cur.rowcount:
+            counts["messages"] = cur.rowcount
+
+        cur = self.c.execute("DELETE FROM chatrooms WHERE user_id=?", (user_id,))
+        if cur.rowcount:
+            counts["chatrooms"] = cur.rowcount
+
+        for table in self._USER_SCOPED_TABLES:
+            cur = self.c.execute(
+                "DELETE FROM %s WHERE user_id=?" % table, (user_id,))
+            if cur.rowcount:
+                counts[table] = cur.rowcount
+
+        # 用户创建的情景用 creator_id 而非 user_id
+        cur = self.c.execute("DELETE FROM scenarios WHERE creator_id=?", (user_id,))
+        if cur.rowcount:
+            counts["scenarios"] = cur.rowcount
+
+        cur = self.c.execute("DELETE FROM users WHERE id=?", (user_id,))
+        counts["users"] = cur.rowcount
+        self.c.commit()
+        return counts
+
     def revoke_all_tokens(self, user_id: int) -> None:
         """吊销某用户全部令牌 —— 改密码后应调用。"""
         self.c.execute("DELETE FROM auth_tokens WHERE user_id=?", (user_id,))
