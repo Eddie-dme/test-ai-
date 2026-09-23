@@ -47,6 +47,11 @@ PROFILES = {
 
 # (输出名, 界面截图, 主标题, 副标题)
 CARDS = [
+    # 角色列表放在首位 —— 上架图第一张要回答「这是什么应用」，
+    # 六张角色卡片比单张对话截图更直接。
+    ("00-roles", "00-roles.png",
+     "Choose who<br>you fall for.",
+     "Six characters at launch, each with a voice and a past"),
     ("01-chat", "01-chat.png",
      "She remembers<br>what you said last night.",
      "Long-term memory, mood, and a story that reacts to you"),

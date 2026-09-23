@@ -125,11 +125,20 @@ Six characters at launch — each with their own voice, memory, and secrets. Hid
 
 截图（三套内容相同，画布不同）：
 
-- `screenshots/play/` — 1080×1920，5 张（Play 要求宽高比 ≤2:1，此处 1.78）
-- `screenshots/ios-6.7/` — 1290×2796，5 张
-- `screenshots/ios-6.9/` — 1320×2868，5 张
+- `screenshots/play/` — 1080×1920，6 张（Play 要求宽高比 ≤2:1，此处 1.78）
+- `screenshots/ios-6.7/` — 1290×2796，6 张
+- `screenshots/ios-6.9/` — 1320×2868，6 张
 
-顺序对应卖点：长期记忆 → 情景模式 → 图像生成 → 角色动态 → 角色深度。
+顺序对应卖点：
+
+```
+00-roles     角色阵容      第一张要回答「这是什么应用」
+01-chat      长期记忆      角色的记忆与状态栏
+02-scenario  情景模式
+03-album     图像生成
+04-feed      角色动态
+05-detail    角色深度
+```
 
 ---
 
