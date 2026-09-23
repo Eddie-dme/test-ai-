@@ -165,6 +165,7 @@ def main():
             time.sleep(max(settle_ms, 2500) / 1000)
         else:
             deadline = time.time() + 25
+            ready = False
             while time.time() < deadline:
                 time.sleep(0.4)
                 try:
@@ -173,11 +174,14 @@ def main():
                         "returnByValue": True})
                     val = res["result"].get("value", "")
                     if val.startswith("complete") and "function" in val:
+                        ready = True
                         break
                 except Exception:
                     pass
-            else:
-                raise RuntimeError("页面未在 25 秒内就绪")
+            if not ready:
+                # 页面 JS 报错时 switchTab 不会存在；不要直接放弃，
+                # 继续执行脚本以便把真实错误取回来。
+                print("  警告：页面未就绪（可能有 JS 错误），继续执行脚本")
 
             if tab.startswith("@"):
                 # 参数为 @<js文件> 时执行脚本并等待 Promise（用于生成真实对话等内容）

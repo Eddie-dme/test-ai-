@@ -96,3 +96,9 @@ docs/assets/icon-options*.png
 # 不进公开仓库。仅存本地，供新会话读取接续进度。
 # ─────────────────────────────────────────────────────────
 HANDOFF.md
+
+# ─────────────────────────────────────────────────────────
+# APK 构建期常量 —— 含访问密钥，不进公开仓库。
+# 模板见同目录 BuildConfig.java.template
+# ─────────────────────────────────────────────────────────
+android_shell/app/src/main/java/top/lurvy/vesperine/BuildConfig.java

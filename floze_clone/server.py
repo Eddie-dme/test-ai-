@@ -15,6 +15,7 @@ Vesperine 复刻 —— 主服务（零依赖，仅用 Python 标准库）
 from __future__ import annotations
 
 import base64
+import hmac
 import json
 import os
 import sys
@@ -37,6 +38,11 @@ from store import Store, connect, ok, err, now
 
 STATIC = Path(__file__).resolve().parent / "static"
 GENERATED_DIR = STATIC / "generated"      # 生成的图片落盘目录（静态可访问）
+
+# 访问密钥 —— 所有 /api/* 请求必须带 X-Access-Key 匹配此值。
+# 未配置时跳过校验（方便本地开发）；生产环境必须设置。
+# 静态资源（前端页面、立绘）不受保护，否则前端自身都加载不了。
+ACCESS_KEY = os.environ.get("ACCESS_KEY", "").strip()
 SPEECH_DIR = STATIC / "speech"            # 语音落盘目录（静态可访问）
 
 import os as _os
@@ -1152,8 +1158,35 @@ class API:
 
 
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):     # 降噪
-        pass
+    def log_message(self, fmt, *args):
+        """访问日志 —— 记录真实来源 IP 与请求行。
+
+        默认实现只写 stderr 且不含来源 IP，出问题无法追查。
+        经反向代理时以 X-Forwarded-For 的首段为准。
+        """
+        try:
+            ip = self.client_address[0] if self.client_address else "?"
+            fwd = self.headers.get("X-Forwarded-For", "") if self.headers else ""
+            if fwd:
+                ip = "%s via %s" % (fwd.split(",")[0].strip(), ip)
+            sys.stderr.write("[%s] %s %s\n" % (
+                time.strftime("%Y-%m-%d %H:%M:%S"), ip, fmt % args))
+            sys.stderr.flush()
+        except Exception:
+            pass
+
+    def _authorized(self) -> bool:
+        """校验请求头里的访问密钥。未配置 ACCESS_KEY 时放行。
+
+        用 compare_digest 而非 == ，避免比较过程泄露密钥长度/前缀。
+        """
+        if not ACCESS_KEY:
+            return True
+        provided = self.headers.get("X-Access-Key", "") if self.headers else ""
+        try:
+            return hmac.compare_digest(provided.encode(), ACCESS_KEY.encode())
+        except Exception:
+            return False
 
     def _api(self) -> API:
         """每个请求用独立 SQLite 连接。
@@ -1170,7 +1203,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         # CORS：APK 内嵌前端时走 file:// 协议，跨域请求需要放行
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Access-Key")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -1225,7 +1258,7 @@ class Handler(BaseHTTPRequestHandler):
         """CORS 预检请求（APK 内嵌前端的跨域调用会先发 OPTIONS）"""
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Access-Key")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Max-Age", "86400")
         self.end_headers()
@@ -1235,6 +1268,8 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         p, qs = u.path, urllib.parse.parse_qs(u.query)
         if p.startswith("/api/"):
+            if not self._authorized():
+                return self._json({"flag": 1, "msg": "UNAUTHORIZED"}, 401)
             api = self._api()
         else:
             api = None
@@ -1307,6 +1342,8 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- POST
     def do_POST(self):
         p = urllib.parse.urlparse(self.path).path
+        if p.startswith("/api/") and not self._authorized():
+            return self._json({"flag": 1, "msg": "UNAUTHORIZED"}, 401)
         api = self._api()
         try:
             if p == "/api/chatroom":

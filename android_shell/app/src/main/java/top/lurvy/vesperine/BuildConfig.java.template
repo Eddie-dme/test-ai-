@@ -1,0 +1,27 @@
+package top.lurvy.vesperine;
+
+/**
+ * 构建期常量。
+ *
+ * 这是模板，不进版本控制的是同目录下的 BuildConfig.java ——
+ * 后者含访问密钥，已被 .gitignore 排除（本仓库是公开仓库）。
+ *
+ * 新环境搭建：复制本文件为 BuildConfig.java，填入下列值。
+ *
+ * ACCESS_KEY 必须与服务端环境变量 ACCESS_KEY 一致。
+ * 留空则前端不发 X-Access-Key 头 —— 仅当服务端也未配置 ACCESS_KEY 时可用。
+ */
+public final class BuildConfig {
+    public static final boolean DEBUG = true;
+    public static final String APPLICATION_ID = "top.lurvy.vesperine";
+    public static final int VERSION_CODE = 1;
+    public static final String VERSION_NAME = "0.1.0";
+
+    /** 服务端地址，例如 http://1.2.3.4:8080 */
+    public static final String SERVER_URL = "http://REPLACE_ME:8080";
+
+    /** 访问密钥，与服务端 ACCESS_KEY 一致 */
+    public static final String ACCESS_KEY = "";
+
+    private BuildConfig() {}
+}

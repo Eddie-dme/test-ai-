@@ -162,6 +162,10 @@ public class MainActivity extends Activity {
         if (assetExists("www/index.html")) {
             String local = "file:///android_asset/www/index.html?api="
                     + android.net.Uri.encode(serverUrl);
+            // 访问密钥随 URL 传给前端；为空则不加（服务端未配置时不校验）
+            if (BuildConfig.ACCESS_KEY != null && !BuildConfig.ACCESS_KEY.isEmpty()) {
+                local += "&key=" + android.net.Uri.encode(BuildConfig.ACCESS_KEY);
+            }
             web.loadUrl(local);
         } else {
             web.loadUrl(serverUrl);

@@ -322,11 +322,31 @@ const API_BASE = (() => {
   return '';                       // 同源
 })();
 
+/* 访问密钥 —— 服务端对 /api/* 做校验。来源与 API_BASE 同理，
+ * 优先 URL 参数 ?key=，其次 window.__VESPERINE_KEY__。
+ * 未配置则不发此头（服务端也不会校验，用于本地开发）。 */
+const ACCESS_KEY = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get('key');
+    if (q) return q;
+  } catch (e) {}
+  return window.__VESPERINE_KEY__ ? String(window.__VESPERINE_KEY__) : '';
+})();
+
+/** 统一构造请求头：在调用方给的头之上附加访问密钥。 */
+function authHeaders(extra) {
+  const h = Object.assign({}, extra || {});
+  if (ACCESS_KEY) h['X-Access-Key'] = ACCESS_KEY;
+  return h;
+}
+
 let state = { roles: [], rooms: [], modes: [], chatroom: null, role: null,
               tab: 'roles', sending: false };
 
 async function api(path, opts) {
-  const r = await fetch(API_BASE + path, opts);
+  const o = Object.assign({}, opts);
+  o.headers = authHeaders(o.headers);
+  const r = await fetch(API_BASE + path, o);
   return r.json();
 }
 function toast(msg) {
@@ -594,7 +614,7 @@ async function send() {
 
   try {
     const resp = await fetch(API_BASE + '/api/message/send', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
+      method: 'POST', headers: authHeaders({'Content-Type':'application/json'}),
       body: JSON.stringify({ chatroomId: state.chatroom.id, text })
     });
     if (resp.headers.get('content-type')?.includes('application/json')) {
