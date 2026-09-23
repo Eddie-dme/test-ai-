@@ -642,6 +642,9 @@ function setHero(roleName) {
   el.onerror = () => { el.style.display = 'none'; };
   el.onload = () => { el.style.display = 'block'; };
   el.src = url;
+  // 给 src 赋同样的值不会重新触发 load 事件，缓存命中时 onload 永不执行，
+  // display 就卡在初始的 none 上。这里补一次「已加载完成」检查。
+  if (el.complete && el.naturalWidth > 0) el.style.display = 'block';
 }
 
 function openRoom(c) {

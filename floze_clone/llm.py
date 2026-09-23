@@ -86,13 +86,7 @@ CHAT_MODES = {
                 "heart_cost": 3},
     "story":   {"model": MAIN_MODEL, "temperature": 1.10, "max_tokens": 900,
                 "style": ("Advance the plot actively. 2-3 paragraphs (~700-1000 characters). "
-                          "Introduce a new development, a discovery, or a complication.\n\n"
-                          "Example of the expected density —\n"
-                          "User: The east wing door is locked. Why?\n"
-                          "Lucien: *He does not answer at once. When he does, his voice has "
-                          "lost its polished edge.* Because I put the lock there myself, the "
-                          "year after she died. *He turns the ring on his finger, once.* "
-                          "I told myself it was to keep looters out. It was not."),
+                          "Introduce a new development, a discovery, or a complication."),
                 "heart_cost": 3},
     "epic":    {"model": MAIN_MODEL, "temperature": 1.10, "max_tokens": 1800,
                 "style": ("Write long, richly detailed, immersive prose — at least "
@@ -107,12 +101,77 @@ BASE_SYSTEM = (
     "Never break character or mention being an AI."
 )
 
-# 示例对话 —— 实测证明这是控制输出长度的最有效杆杆（49→336 字符）
-STYLE_EXAMPLES = [
-    ("Tell me about this place.",
-     "*He sets the goblet down, and for a long moment only the fire speaks.*\n\n"
-     "\"This house was built for a wedding that never came,\" *he says at last.* "),
-]
+# 示例对话 —— 实测证明这是控制输出长度最有效的杠杆。
+#
+# 关键：示例长度必须与对应档位的字数要求同量级。模型模仿的是示例的密度，
+# 而不是 Style 里的数字。之前所有档位共用一条 ~120 字符的示例，结果
+# epic（要求 1200+ 字符）只输出 188 字符，classic / story / epic 三者
+# 几乎无差别 —— 付费买高档位拿不到对应长度的内容。
+#
+# 文案刻意回避 he / she 与具体道具：示例对所有角色共用，
+# 写死人称会让异性角色串味（旧版那条 "He sets the goblet down"
+# 会原样出现在任何角色的 system prompt 里）。
+STYLE_EXAMPLES = {
+    "lite": [
+        ("Are you alright?",
+         "*A nod, once.* \"I am now.\""),
+    ],
+    "quick": [
+        ("Are you alright?",
+         "*A hand wipes the blade on a sleeve before answering.*\n\n"
+         "\"I have had worse mornings,\" *comes the reply.* "
+         "\"Ask me again once the storm passes.\""),
+    ],
+    "classic": [
+        ("Tell me about this place.",
+         "*A pause, long enough that the fire fills it.*\n\n"
+         "\"It was built for a wedding that never came,\" *comes the answer, "
+         "quieter than before.* \"Nobody lives here now — nobody who would "
+         "admit it.\" *Something shifts, in the room or in the telling of it.* "
+         "\"You are the first to ask in years. The others take one look at the "
+         "gate and decide the story is not worth the walk.\""),
+    ],
+    "smooth": [
+        ("Do you ever think about leaving?",
+         "*The question lands and stays there. Outside, rain starts against the "
+         "glass — slowly, as if testing whether it is welcome.*\n\n"
+         "\"Every spring,\" *comes the answer at last.* \"Something in the air "
+         "changes and I start packing. I never get past the second drawer.\" "
+         "*A breath that is half a laugh and never finishes.*\n\n"
+         "\"It is not the house that keeps me. It is the version of me that lives "
+         "in it. Out there I would have to find out who I am without the walls, "
+         "and I am not certain I would like the answer.\""),
+    ],
+    "story": [
+        ("The east wing door is locked. Why?",
+         "*A pause — not the kind that gathers words, the kind that decides "
+         "against them.*\n\n"
+         "\"Because I put the lock there myself,\" *comes the answer at last.* "
+         "\"The year after she died. I told everyone it was to keep looters out.\" "
+         "*A hand turns a ring, once, then stops.*\n\n"
+         "*From somewhere behind the door: a sound. Small. Deliberate. Like "
+         "something set down on wood.* \"That,\" *says the voice, flat now,* "
+         "\"is why nobody else has a key.\""),
+    ],
+    "epic": [
+        ("Tell me what you are not supposed to tell me.",
+         "*The fire has burned down to the stage where faces are mostly "
+         "guesswork, and the room has gone quiet in the particular way that "
+         "invites confessions.*\n\n"
+         "\"There is a list,\" *comes the answer, so quietly it barely crosses "
+         "the table.* \"Names. Nine of them. I have spent eleven years putting "
+         "it together and I have never once written it down — because paper can "
+         "be taken from you.\" *A hand rises to a temple and taps twice.* "
+         "\"It is all up here. Every night I check that they are still there.\"\n\n"
+         "*Outside, wind moves through the courtyard and a shutter works itself "
+         "loose. Neither of them looks toward the sound.*\n\n"
+         "\"You are the fourth person to hear this,\" *the voice continues, and "
+         "now there is something underneath it, a current.* \"Two of the others "
+         "are on the list. The third is the reason I started it.\" *A pause, and "
+         "then, with terrible mildness:* \"So you understand why I would like to "
+         "know what you are doing in my house.\""),
+    ],
+}
 
 
 def api_key() -> str:
@@ -190,7 +249,8 @@ def build_messages(role: dict, persona: dict, memory: str,
         if pname:
             system += (f"\n\nThe user is {pname}. "
                        f"{persona.get('persona_desc','')}")
-        for ex_user, ex_ai in STYLE_EXAMPLES:
+        for ex_user, ex_ai in STYLE_EXAMPLES.get(chat_mode,
+                                                 STYLE_EXAMPLES["classic"]):
             system += (f"\n\nExample exchange —\nUser: {ex_user}\n"
                        f"{role['name']}: {ex_ai}")
         if memory:
