@@ -472,8 +472,13 @@ async function api(path, opts) {
   const data = await r.json();
   // 令牌失效：清掉并退回登录界面。认证端点本身除外 ——
   // 登录失败返回的也是 401 语义，不能因此递归弹窗。
+  //
+  // 关键：只在「本次确实带了令牌、服务端仍拒绝」时才登出。
+  // 若本地令牌已空（例如并发请求里有一个先失败清掉了它），
+  // 后续请求会因为「没带令牌」同样收到 401 —— 那不是会话失效，
+  // 对它们再做一次登出只会放大成一次莫名其妙的掉线。
   if (r.status === 401 && data && data.msg === 'UNAUTHORIZED'
-      && !path.startsWith('/api/auth/')) {
+      && !path.startsWith('/api/auth/') && AUTH_TOKEN.get()) {
     AUTH_TOKEN.clear();
     showAuthGate(authErrorText('UNAUTHORIZED'));
   }
