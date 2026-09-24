@@ -1285,6 +1285,31 @@ class Handler(BaseHTTPRequestHandler):
         token = store.create_token(user["id"], auth.TOKEN_TTL_SECONDS)
         return ok({"token": token, "user": self._public_user(user)})
 
+    def _change_password(self, body: dict) -> dict:
+        """修改密码。需要提供当前密码，改完吊销所有令牌。
+
+        吊销全部（而非只留当前）是刻意的：若账号曾被他人使用，
+        改密码应当把对方踢下线。
+        """
+        store = Store(connect(init_schema=False))
+        uid = store.user_id_by_token(self._bearer_token())
+        if not uid:
+            return err("UNAUTHORIZED")
+
+        current = body.get("currentPassword") or ""
+        newpw = body.get("newPassword") or ""
+        if len(newpw) < 8 or len(newpw) > 200:
+            return err("WEAK_PASSWORD")
+
+        store.user_id = uid
+        user = store.ensure_user()
+        if not auth.verify_password(current, user.get("password_hash") or ""):
+            return err("INVALID_CREDENTIALS")
+
+        store.set_password(uid, auth.hash_password(newpw))
+        store.revoke_all_tokens(uid)
+        return ok(None)
+
     def _delete_account(self) -> dict:
         """删除当前账号及其全部数据。
 
@@ -1482,6 +1507,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._logout())
             if p == "/api/auth/delete":
                 return self._json(self._delete_account())
+            if p == "/api/auth/password":
+                return self._json(self._change_password(self._body()))
             if p == "/api/chatroom":
                 return self._json(api.chatroom_create(self._body()))
             if p == "/api/ad/reward":

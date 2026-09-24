@@ -261,6 +261,10 @@
   .ub-danger.armed{background:rgba(201,106,138,.16);color:#f0a4bd;
         border-color:var(--rose)}
   .ub-note{font-size:10.5px;color:#6f6885;line-height:1.5}
+  .pwform{display:flex;flex-direction:column;gap:6px;margin:2px 0 4px}
+  .pwform .authinput{height:34px;font-size:12.5px;padding:0 10px}
+  .pwrow{display:flex;gap:6px}
+  .pwrow .ub-btn{flex:1}
 
   /* ---- 登录界面 ---- */
   .authgate{position:fixed;inset:0;z-index:200;display:flex;
@@ -340,6 +344,17 @@
     <div class="userbox">
       <div class="ub-who">
         <span id="userName">—</span>
+      </div>
+      <button class="ub-btn" id="btnChangePw">Change password</button>
+      <div id="pwForm" class="pwform" style="display:none">
+        <input id="pwCurrent" class="authinput" type="password"
+               autocomplete="current-password" placeholder="Current password">
+        <input id="pwNew" class="authinput" type="password"
+               autocomplete="new-password" placeholder="New password (8+ chars)">
+        <div class="pwrow">
+          <button class="ub-btn" id="pwSubmit">Update</button>
+          <button class="ub-btn" id="pwCancel">Cancel</button>
+        </div>
       </div>
       <button class="ub-btn" id="btnSignOut">Sign out</button>
       <button class="ub-btn ub-danger" id="btnDeleteAccount">Delete account</button>
@@ -1460,6 +1475,55 @@ function renderAccount() {
   const u = state.user || {};
   $('#userName').textContent = u.nickname || (u.id ? 'User #' + u.id : '—');
 }
+
+/* 改密码。表单就地展开，不用原生 prompt() —— WebView 不实现它。
+   改完服务端会吊销全部令牌（把可能存在的其他会话踢下线），
+   因此这里也要清掉本地令牌并回到登录页。 */
+$('#btnChangePw').onclick = () => {
+  const f = $('#pwForm');
+  const opening = f.style.display === 'none';
+  f.style.display = opening ? 'flex' : 'none';
+  if (opening) $('#pwCurrent').focus();
+};
+
+$('#pwCancel').onclick = () => {
+  $('#pwForm').style.display = 'none';
+  $('#pwCurrent').value = '';
+  $('#pwNew').value = '';
+};
+
+$('#pwSubmit').onclick = async () => {
+  const btn = $('#pwSubmit');
+  const cur = $('#pwCurrent').value;
+  const nw = $('#pwNew').value;
+  if (!cur || !nw) { toast('Fill in both password fields'); return; }
+  if (nw.length < 8) { toast('New password must be at least 8 characters'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Updating…';
+  try {
+    const r = await api('/api/auth/password', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ currentPassword: cur, newPassword: nw })
+    });
+    if (r.flag !== 0) {
+      const map = {
+        INVALID_CREDENTIALS: 'Current password is incorrect.',
+        WEAK_PASSWORD: 'New password must be at least 8 characters.',
+        UNAUTHORIZED: 'Session expired — please sign in again.'
+      };
+      throw new Error(map[r.msg] || r.msg);
+    }
+    toast('Password updated — signing you out');
+    AUTH_TOKEN.clear();
+    setTimeout(() => location.reload(), 1400);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Update';
+    toast('Could not update: ' + e.message);
+  }
+};
 
 $('#btnSignOut').onclick = async () => {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* 网络失败也照样本地登出 */ }

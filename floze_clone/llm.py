@@ -129,7 +129,9 @@ STYLE_EXAMPLES = {
          "quieter than before.* \"Nobody lives here now — nobody who would "
          "admit it.\" *Something shifts, in the room or in the telling of it.* "
          "\"You are the first to ask in years. The others take one look at the "
-         "gate and decide the story is not worth the walk.\""),
+         "gate and decide the story is not worth the walk. I have stopped "
+         "correcting them.\" *A hand turns a cup, once, and sets it back down.* "
+         "\"Ask me something else, or ask me nothing at all. Both are fine.\""),
     ],
     "smooth": [
         ("Do you ever think about leaving?",
@@ -140,7 +142,11 @@ STYLE_EXAMPLES = {
          "*A breath that is half a laugh and never finishes.*\n\n"
          "\"It is not the house that keeps me. It is the version of me that lives "
          "in it. Out there I would have to find out who I am without the walls, "
-         "and I am not certain I would like the answer.\""),
+         "and I am not certain I would like the answer.\" *The rain finds its "
+         "rhythm. Neither of them moves to close the window.*\n\n"
+         "\"You asked as though the answer were simple,\" *comes the addition, "
+         "softer now.* \"I have been trying to make it simple for eleven years. "
+         "It stays exactly as complicated as it was on the first night.\""),
     ],
     "story": [
         ("The east wing door is locked. Why?",
