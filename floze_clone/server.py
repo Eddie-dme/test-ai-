@@ -237,6 +237,35 @@ class API:
                    "heartInfo": self.s.heart_info(u["id"])})
 
     # ---- role
+    def bootstrap(self) -> dict:
+        """首屏所需的全部数据，一次返回。
+
+        跨境 RTT 实测 380ms，而首屏原本要打 6 个请求（auth/me、
+        role/list、chatMode、chatroom/list、heart/list、ad/times）。
+        即便前端并行发出，每个请求仍要各自走一遍网络；合并成一个
+        把首屏等待从约 2 秒压到 400ms 量级。
+
+        服务端这边是串行取数 —— 它到数据库是本地的，多查几次的
+        代价远低于让客户端多跑一次跨国往返。
+        """
+        u = self.s.ensure_user()
+        return ok({
+            "user": {
+                "id": u["id"], "nickname": u.get("nickname", ""),
+                "avatar": u.get("avatar", ""),
+                "personaName": u.get("persona_name", ""),
+                "personaDesc": u.get("persona_desc", ""),
+                "hearts": u.get("hearts", 0),
+            },
+            "roles": self.role_list().get("data") or [],
+            "modes": self.chat_modes().get("data") or [],
+            "rooms": self.chatroom_list().get("data") or [],
+            # heart_list 返回的是 {heartInfo, history}，这里只取前者，
+            # 免得前端要写成 d.heartInfo.heartInfo.amount
+            "heartInfo": (self.heart_list().get("data") or {}).get("heartInfo"),
+            "adTimes": self.ad_times().get("data"),
+        })
+
     def role_list(self) -> dict:
         return ok(self.s.list_roles())
 
@@ -1424,6 +1453,7 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/auth/me":             return self._json(self._me())
             if p == "/api/user/settings":       return self._json(api.user_settings())
             if p == "/api/role/mine":           return self._json(api.role_mine())
+            if p == "/api/bootstrap":          return self._json(api.bootstrap())
             if p == "/api/role/list":           return self._json(api.role_list())
             # 通配路由必须限定为数字 ID。
             # 若只写 startswith("/api/role/")，/api/role/create 与
@@ -1693,6 +1723,35 @@ def local_addresses(port: int) -> list[str]:
     return addrs
 
 
+def _background_maintenance(interval_sec: int = 3600) -> None:
+    """后台维护：WAL checkpoint + 清理过期令牌。
+
+    为什么要 checkpoint：SQLite 的 WAL 模式下，写入先进 -wal 文件，
+    只有 checkpoint 才合并回主库。长期运行的进程若不主动触发，
+    -wal 会持续增长 —— 实测生产库主文件 356 KB，而 -wal 涨到 4.1 MB。
+    这不会丢数据（读取会自动合并），但会拖慢查询，也让「直接拷 .db」
+    这种备份方式拿到过期快照（今天就踩到了）。
+
+    为什么要清令牌：过期的 auth_tokens 只在被访问到时才删除，
+    长期不登录的账号会留下垃圾行。
+
+    维护失败一律吞掉 —— 它不该影响正常服务。
+    """
+    while True:
+        time.sleep(interval_sec)
+        try:
+            conn = connect(init_schema=False)
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+        try:
+            Store(connect(init_schema=False)).prune_expired_tokens()
+        except Exception:
+            pass
+
+
 def main():
     conn = connect()
     store = Store(conn)
@@ -1716,6 +1775,9 @@ def main():
     if HOST == "0.0.0.0":
         print("  ⚠️  已监听 0.0.0.0 —— 请勿直接把此端口暴露到公网")
     print("=" * 62)
+    # 后台维护线程（daemon，不阻塞退出）
+    threading.Thread(target=_background_maintenance, daemon=True).start()
+
     try:
         ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
     except KeyboardInterrupt:

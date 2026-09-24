@@ -1626,40 +1626,61 @@ $('#authEmail').addEventListener('keydown', e => {
 async function ensureAuth() {
   if (!AUTH_TOKEN.get()) { showAuthGate(''); return false; }
   try {
-    const r = await api('/api/auth/me');
-    if (r.flag === 0) { state.user = r.data; return true; }
+    // 用 bootstrap 而非 /api/auth/me —— 验令牌的同时把首屏数据一起取回，
+    // 省掉后续 5 个请求各自的跨国往返。
+    const r = await api('/api/bootstrap');
+    if (r.flag === 0 && applyBootstrap(r.data)) return true;
   } catch (e) { /* 网络异常也回落到登录界面 */ }
-  AUTH_TOKEN.clear();
-  showAuthGate('Your session expired. Please sign in again.');
+  // 只有确实带了令牌仍失败时才登出（同 api() 里的判断）
+  if (AUTH_TOKEN.get()) {
+    AUTH_TOKEN.clear();
+    showAuthGate('Your session expired. Please sign in again.');
+  }
   return false;
 }
 
 /** 登录后的数据装载。 */
-async function loadAppData() {
-  // 用 allSettled 而非 all：两个请求谁先回来就先渲染谁。
-  // 实测 chatMode 偶发要 6 秒以上，用 Promise.all 会让已经返回的
-  // role/list 一起干等 —— 界面白屏，用户体感就是「卡住」。
-  const [rolesRes, modesRes] = await Promise.allSettled([
-    api('/api/role/list'), api('/api/chatMode')
-  ]);
-  state.roles = (rolesRes.status === 'fulfilled' && rolesRes.value.flag === 0)
-    ? (rolesRes.value.data || []) : [];
-  state.modes = (modesRes.status === 'fulfilled' && modesRes.value.flag === 0)
-    ? (modesRes.value.data || []) : [];
+/** 把 bootstrap 返回的数据铺到界面上。 */
+function applyBootstrap(d) {
+  if (!d) return false;
+  if (d.user) state.user = d.user;
+  state.roles = d.roles || [];
+  state.modes = d.modes || [];
+  state.rooms = d.rooms || [];
+
   if (state.modes.length) {
     $('#modeSel').innerHTML = state.modes.map(m =>
       `<option value="${m.id}">${m.id} · ${m.heartCost}💖</option>`).join('');
     $('#modeSel').value = 'classic';
   }
-  // modes 拿不到时保留 select 的默认内容，不阻断角色列表渲染
   updateCost();
-  await refreshRooms();
   // 走 switchTab 而不是直接 renderList()：窄屏下「列表放主区」的
-  // 分支在 switchTab 里，绕过它会导致首屏仍是空聊天区。
+  // 分支在 switchTab 里，绕过它首屏会是空聊天区。
   switchTab('roles');
-  refreshWallet();
-  refreshAd();
+
+  if (d.heartInfo && d.heartInfo.amount !== undefined) {
+    $('#hearts').textContent = d.heartInfo.amount;
+  }
+  if (d.adTimes && d.adTimes.CHAT && d.adTimes.DAILY_HEART) {
+    const chat = d.adTimes.CHAT, daily = d.adTimes.DAILY_HEART;
+    const mine = state.chatroom
+      ? (chat.unredeemedChatroomIds || []).includes(state.chatroom.id) : false;
+    $('#adInfo').textContent =
+      `📺 聊天额度 ${chat.count}/${chat.limit}${mine ? ' · 本条已免费' : ''}` +
+      ` ｜ 每日 hearts ${daily.count}/${daily.limit}`;
+  }
   renderAccount();
+  return true;
+}
+
+async function loadAppData() {
+  // 登录成功后复用同一个接口，一次拿齐首屏数据
+  try {
+    const r = await api('/api/bootstrap');
+    if (r.flag === 0) applyBootstrap(r.data);
+  } catch (e) {
+    toast('Could not load your data. Pull to retry.');
+  }
 }
 
 (async function init() {
