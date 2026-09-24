@@ -261,6 +261,10 @@
   .ub-danger.armed{background:rgba(201,106,138,.16);color:#f0a4bd;
         border-color:var(--rose)}
   .ub-note{font-size:10.5px;color:#6f6885;line-height:1.5}
+  .pwform{display:flex;flex-direction:column;gap:6px;margin:2px 0 4px}
+  .pwform .authinput{height:34px;font-size:12.5px;padding:0 10px}
+  .pwrow{display:flex;gap:6px}
+  .pwrow .ub-btn{flex:1}
 
   /* ---- 登录界面 ---- */
   .authgate{position:fixed;inset:0;z-index:200;display:flex;
@@ -340,6 +344,17 @@
     <div class="userbox">
       <div class="ub-who">
         <span id="userName">—</span>
+      </div>
+      <button class="ub-btn" id="btnChangePw">Change password</button>
+      <div id="pwForm" class="pwform" style="display:none">
+        <input id="pwCurrent" class="authinput" type="password"
+               autocomplete="current-password" placeholder="Current password">
+        <input id="pwNew" class="authinput" type="password"
+               autocomplete="new-password" placeholder="New password (8+ chars)">
+        <div class="pwrow">
+          <button class="ub-btn" id="pwSubmit">Update</button>
+          <button class="ub-btn" id="pwCancel">Cancel</button>
+        </div>
       </div>
       <button class="ub-btn" id="btnSignOut">Sign out</button>
       <button class="ub-btn ub-danger" id="btnDeleteAccount">Delete account</button>
@@ -425,6 +440,18 @@ const AUTH_TOKEN = {
   set(v) { try { localStorage.setItem(TOKEN_KEY, v); } catch (e) {} },
   clear() { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
 };
+
+/* 立绘地址。
+ *
+ * App 内嵌了立绘（assets/www/generated），走 file:// 相对路径读取 ——
+ * 实测跨国下载 350 KB 要 8~50 秒，而本地读取是即时。
+ * 浏览器里没有内嵌资源，仍回落到服务端。 */
+function portraitUrl(name) {
+  const file = `portrait-${String(name).toLowerCase()}.jpeg`;
+  return (location.protocol === 'file:')
+    ? `generated/${file}`
+    : `${API_BASE}/generated/${file}`;
+}
 
 /** 统一构造请求头：附加 app 访问密钥与用户令牌。 */
 function authHeaders(extra) {
@@ -553,7 +580,7 @@ async function renderRoleDetail(role) {
 
   const wrap = document.createElement('div');
   wrap.className = 'detail';
-  const face = `${API_BASE}/generated/portrait-${r.name.toLowerCase()}.jpeg`;
+  const face = portraitUrl(r.name);
   wrap.innerHTML = `
     <img class="portrait" src="${face}" alt="${r.name}"
          onerror="this.style.visibility='hidden'">
@@ -598,7 +625,7 @@ function fillRolesInto(box) {
     const d = document.createElement('div');
     d.className = 'item';
     // 立绘：约定文件名 portrait-<name>.jpeg，缺失时自动隐藏
-    const face = `${API_BASE}/generated/portrait-${r.name.toLowerCase()}.jpeg`;
+    const face = portraitUrl(r.name);
     d.innerHTML = `<img class="face" src="${face}" alt="${r.name}"
         loading="lazy" onerror="this.style.display='none'">
       <div style="min-width:0;flex:1">
@@ -680,7 +707,7 @@ async function startChat(role) {
 function setHero(roleName) {
   const el = $('#heroFace');
   if (!roleName) { el.style.display = 'none'; return; }
-  const url = `${API_BASE}/generated/portrait-${roleName.toLowerCase()}.jpeg`;
+  const url = portraitUrl(roleName);
   el.onerror = () => { el.style.display = 'none'; };
   el.onload = () => { el.style.display = 'block'; };
   el.src = url;
@@ -1461,6 +1488,55 @@ function renderAccount() {
   $('#userName').textContent = u.nickname || (u.id ? 'User #' + u.id : '—');
 }
 
+/* 改密码。表单就地展开，不用原生 prompt() —— WebView 不实现它。
+   改完服务端会吊销全部令牌（把可能存在的其他会话踢下线），
+   因此这里也要清掉本地令牌并回到登录页。 */
+$('#btnChangePw').onclick = () => {
+  const f = $('#pwForm');
+  const opening = f.style.display === 'none';
+  f.style.display = opening ? 'flex' : 'none';
+  if (opening) $('#pwCurrent').focus();
+};
+
+$('#pwCancel').onclick = () => {
+  $('#pwForm').style.display = 'none';
+  $('#pwCurrent').value = '';
+  $('#pwNew').value = '';
+};
+
+$('#pwSubmit').onclick = async () => {
+  const btn = $('#pwSubmit');
+  const cur = $('#pwCurrent').value;
+  const nw = $('#pwNew').value;
+  if (!cur || !nw) { toast('Fill in both password fields'); return; }
+  if (nw.length < 8) { toast('New password must be at least 8 characters'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Updating…';
+  try {
+    const r = await api('/api/auth/password', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ currentPassword: cur, newPassword: nw })
+    });
+    if (r.flag !== 0) {
+      const map = {
+        INVALID_CREDENTIALS: 'Current password is incorrect.',
+        WEAK_PASSWORD: 'New password must be at least 8 characters.',
+        UNAUTHORIZED: 'Session expired — please sign in again.'
+      };
+      throw new Error(map[r.msg] || r.msg);
+    }
+    toast('Password updated — signing you out');
+    AUTH_TOKEN.clear();
+    setTimeout(() => location.reload(), 1400);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Update';
+    toast('Could not update: ' + e.message);
+  }
+};
+
 $('#btnSignOut').onclick = async () => {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* 网络失败也照样本地登出 */ }
   AUTH_TOKEN.clear();
@@ -1555,12 +1631,22 @@ async function ensureAuth() {
 
 /** 登录后的数据装载。 */
 async function loadAppData() {
-  const [roles, modes] = await Promise.all([api('/api/role/list'), api('/api/chatMode')]);
-  state.roles = roles.data || [];
-  state.modes = modes.data || [];
-  $('#modeSel').innerHTML = state.modes.map(m =>
-    `<option value="${m.id}">${m.id} · ${m.heartCost}💖</option>`).join('');
-  $('#modeSel').value = 'classic';
+  // 用 allSettled 而非 all：两个请求谁先回来就先渲染谁。
+  // 实测 chatMode 偶发要 6 秒以上，用 Promise.all 会让已经返回的
+  // role/list 一起干等 —— 界面白屏，用户体感就是「卡住」。
+  const [rolesRes, modesRes] = await Promise.allSettled([
+    api('/api/role/list'), api('/api/chatMode')
+  ]);
+  state.roles = (rolesRes.status === 'fulfilled' && rolesRes.value.flag === 0)
+    ? (rolesRes.value.data || []) : [];
+  state.modes = (modesRes.status === 'fulfilled' && modesRes.value.flag === 0)
+    ? (modesRes.value.data || []) : [];
+  if (state.modes.length) {
+    $('#modeSel').innerHTML = state.modes.map(m =>
+      `<option value="${m.id}">${m.id} · ${m.heartCost}💖</option>`).join('');
+    $('#modeSel').value = 'classic';
+  }
+  // modes 拿不到时保留 select 的默认内容，不阻断角色列表渲染
   updateCost();
   await refreshRooms();
   // 走 switchTab 而不是直接 renderList()：窄屏下「列表放主区」的

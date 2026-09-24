@@ -441,6 +441,18 @@ const AUTH_TOKEN = {
   clear() { try { localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
 };
 
+/* 立绘地址。
+ *
+ * App 内嵌了立绘（assets/www/generated），走 file:// 相对路径读取 ——
+ * 实测跨国下载 350 KB 要 8~50 秒，而本地读取是即时。
+ * 浏览器里没有内嵌资源，仍回落到服务端。 */
+function portraitUrl(name) {
+  const file = `portrait-${String(name).toLowerCase()}.jpeg`;
+  return (location.protocol === 'file:')
+    ? `generated/${file}`
+    : `${API_BASE}/generated/${file}`;
+}
+
 /** 统一构造请求头：附加 app 访问密钥与用户令牌。 */
 function authHeaders(extra) {
   const h = Object.assign({}, extra || {});
@@ -568,7 +580,7 @@ async function renderRoleDetail(role) {
 
   const wrap = document.createElement('div');
   wrap.className = 'detail';
-  const face = `${API_BASE}/generated/portrait-${r.name.toLowerCase()}.jpeg`;
+  const face = portraitUrl(r.name);
   wrap.innerHTML = `
     <img class="portrait" src="${face}" alt="${r.name}"
          onerror="this.style.visibility='hidden'">
@@ -613,7 +625,7 @@ function fillRolesInto(box) {
     const d = document.createElement('div');
     d.className = 'item';
     // 立绘：约定文件名 portrait-<name>.jpeg，缺失时自动隐藏
-    const face = `${API_BASE}/generated/portrait-${r.name.toLowerCase()}.jpeg`;
+    const face = portraitUrl(r.name);
     d.innerHTML = `<img class="face" src="${face}" alt="${r.name}"
         loading="lazy" onerror="this.style.display='none'">
       <div style="min-width:0;flex:1">
@@ -695,7 +707,7 @@ async function startChat(role) {
 function setHero(roleName) {
   const el = $('#heroFace');
   if (!roleName) { el.style.display = 'none'; return; }
-  const url = `${API_BASE}/generated/portrait-${roleName.toLowerCase()}.jpeg`;
+  const url = portraitUrl(roleName);
   el.onerror = () => { el.style.display = 'none'; };
   el.onload = () => { el.style.display = 'block'; };
   el.src = url;
@@ -1619,12 +1631,22 @@ async function ensureAuth() {
 
 /** 登录后的数据装载。 */
 async function loadAppData() {
-  const [roles, modes] = await Promise.all([api('/api/role/list'), api('/api/chatMode')]);
-  state.roles = roles.data || [];
-  state.modes = modes.data || [];
-  $('#modeSel').innerHTML = state.modes.map(m =>
-    `<option value="${m.id}">${m.id} · ${m.heartCost}💖</option>`).join('');
-  $('#modeSel').value = 'classic';
+  // 用 allSettled 而非 all：两个请求谁先回来就先渲染谁。
+  // 实测 chatMode 偶发要 6 秒以上，用 Promise.all 会让已经返回的
+  // role/list 一起干等 —— 界面白屏，用户体感就是「卡住」。
+  const [rolesRes, modesRes] = await Promise.allSettled([
+    api('/api/role/list'), api('/api/chatMode')
+  ]);
+  state.roles = (rolesRes.status === 'fulfilled' && rolesRes.value.flag === 0)
+    ? (rolesRes.value.data || []) : [];
+  state.modes = (modesRes.status === 'fulfilled' && modesRes.value.flag === 0)
+    ? (modesRes.value.data || []) : [];
+  if (state.modes.length) {
+    $('#modeSel').innerHTML = state.modes.map(m =>
+      `<option value="${m.id}">${m.id} · ${m.heartCost}💖</option>`).join('');
+    $('#modeSel').value = 'classic';
+  }
+  // modes 拿不到时保留 select 的默认内容，不阻断角色列表渲染
   updateCost();
   await refreshRooms();
   // 走 switchTab 而不是直接 renderList()：窄屏下「列表放主区」的
