@@ -79,16 +79,16 @@ CHAT_MODES = {
                 "style": ("Reply with 1-2 paragraphs (~400-700 characters total). "
                           "Balanced: some atmosphere, one or two actions, then dialogue."),
                 "heart_cost": 2},
-    "smooth":  {"model": MAIN_MODEL, "temperature": 1.05, "max_tokens": 800,
+    "smooth":  {"model": MAIN_MODEL, "temperature": 0.95, "max_tokens": 800,
                 "style": ("Write in a romantic, novel-like tone. 2-3 paragraphs "
                           "(~700-1000 characters). Prioritise emotional texture "
                           "over plot advancement."),
                 "heart_cost": 3},
-    "story":   {"model": MAIN_MODEL, "temperature": 1.10, "max_tokens": 900,
+    "story":   {"model": MAIN_MODEL, "temperature": 0.95, "max_tokens": 900,
                 "style": ("Advance the plot actively. 2-3 paragraphs (~700-1000 characters). "
                           "Introduce a new development, a discovery, or a complication."),
                 "heart_cost": 3},
-    "epic":    {"model": MAIN_MODEL, "temperature": 1.10, "max_tokens": 1800,
+    "epic":    {"model": MAIN_MODEL, "temperature": 0.98, "max_tokens": 1800,
                 "style": ("Write long, richly detailed, immersive prose — at least "
                           "4 paragraphs and over 1200 characters. Use multiple beats: "
                           "environment, physical action, interiority, and dialogue. "
@@ -111,6 +111,16 @@ BASE_SYSTEM = (
 # 文案刻意回避 he / she 与具体道具：示例对所有角色共用，
 # 写死人称会让异性角色串味（旧版那条 "He sets the goblet down"
 # 会原样出现在任何角色的 system prompt 里）。
+# 各档的最小回复长度。写在 style 里不够 —— 那段位于 system prompt 中段，
+# 实测被忽略的概率很高（同一档位单次输出可从 117 字符跳到 865）。
+# 这里在 system 末尾再钉一次：末尾是模型注意力权重最高的位置。
+MIN_REPLY_CHARS = {
+    "classic": 400,
+    "smooth": 700,
+    "story": 700,
+    "epic": 1200,
+}
+
 STYLE_EXAMPLES = {
     "lite": [
         ("Are you alright?",
@@ -259,6 +269,13 @@ def build_messages(role: dict, persona: dict, memory: str,
                                                  STYLE_EXAMPLES["classic"]):
             system += (f"\n\nExample exchange —\nUser: {ex_user}\n"
                        f"{role['name']}: {ex_ai}")
+        # 长度下限放在示例之后、memory 之前 —— 保持在 system 的末尾附近。
+        floor = MIN_REPLY_CHARS.get(chat_mode)
+        if floor:
+            system += (f"\n\nLength requirement: this reply must be at least "
+                       f"{floor} characters. A shorter reply is a failed reply — "
+                       f"if you are running short, add another beat of action, "
+                       f"sensory detail, or dialogue rather than stopping early.")
         if memory:
             system += f"\n\n{memory}"
         msgs.append({"role": "system", "content": system})
