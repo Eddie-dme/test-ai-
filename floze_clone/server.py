@@ -1310,6 +1310,10 @@ class Handler(BaseHTTPRequestHandler):
             return err("WEAK_PASSWORD")
         if len(password) > 200:
             return err("WEAK_PASSWORD")
+        # 合规：注册前必须明确同意条款与隐私政策。
+        # 客户端会拦一道，服务端再校验一次 —— 客户端校验挡不住直接调接口。
+        if not body.get("acceptedTerms"):
+            return err("TERMS_NOT_ACCEPTED")
         store = Store(connect(init_schema=False))
         if store.user_by_email(email):
             return err("EMAIL_TAKEN")

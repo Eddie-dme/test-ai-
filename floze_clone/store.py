@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS users (
     unlimited_until TEXT DEFAULT '',      -- unlimitedHeartsExpiredAt
     email           TEXT,                 -- 登录邮箱（归一化后的小写）
     password_hash   TEXT,                 -- scrypt$salt$hash，见 auth.py
+    terms_accepted_at REAL DEFAULT 0,     -- 同意服务条款的时间（合规凭证）
     created_at      REAL NOT NULL
 );
 
@@ -407,7 +408,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     必须显式 ALTER。每次启动跑一遍，幂等。
     """
     cols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
-    for col, ddl in (("email", "TEXT"), ("password_hash", "TEXT")):
+    for col, ddl in (("email", "TEXT"), ("password_hash", "TEXT"),
+                     ("terms_accepted_at", "REAL DEFAULT 0")):
         if col not in cols:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
     conn.commit()
@@ -482,9 +484,10 @@ class Store:
         """新建账号。其余配额表沿用懒初始化（INSERT OR IGNORE），无需在此建。"""
         cur = self.c.execute(
             "INSERT INTO users (nickname, persona_name, persona_desc, hearts,"
-            " email, password_hash, created_at) VALUES (?,?,?,?,?,?,?)",
+            " email, password_hash, terms_accepted_at, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
             (nickname, persona_name, persona_desc, 30,
-             email, password_hash, now()))
+             email, password_hash, now(), now()))
         uid = cur.lastrowid
         self.c.commit()
         return dict(self.c.execute(
