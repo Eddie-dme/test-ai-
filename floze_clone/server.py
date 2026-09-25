@@ -236,6 +236,24 @@ class API:
                    "persona": {"name": u["persona_name"], "desc": u["persona_desc"]},
                    "heartInfo": self.s.heart_info(u["id"])})
 
+    def user_settings_update(self, body: dict) -> dict:
+        """更新昵称与 persona（用户自称 + 人设描述）。"""
+        u = self.s.ensure_user()
+        nickname = (body.get("nickname") or "").strip()[:40]
+        if not nickname:
+            return err("NICKNAME_REQUIRED")
+        pname = (body.get("personaName") or "").strip()[:40]
+        pdesc = (body.get("personaDesc") or "").strip()[:500]
+        upd = self.s.update_user_profile(
+            u["id"], nickname=nickname,
+            persona_name=pname, persona_desc=pdesc)
+        return ok({
+            "user": {"id": upd["id"], "nickname": upd["nickname"],
+                     "avatar": upd.get("avatar", "")},
+            "persona": {"name": upd.get("persona_name", ""),
+                        "desc": upd.get("persona_desc", "")},
+        })
+
     # ---- role
     def bootstrap(self) -> dict:
         """首屏所需的全部数据，一次返回。
@@ -1452,6 +1470,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if p == "/api/auth/me":             return self._json(self._me())
             if p == "/api/user/settings":       return self._json(api.user_settings())
+            if p == "/api/user/roles/overview": return self._json(api.roles_overview())
             if p == "/api/role/mine":           return self._json(api.role_mine())
             if p == "/api/bootstrap":          return self._json(api.bootstrap())
             if p == "/api/role/list":           return self._json(api.role_list())
@@ -1539,6 +1558,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._delete_account())
             if p == "/api/auth/password":
                 return self._json(self._change_password(self._body()))
+            if p == "/api/user/settings":
+                return self._json(api.user_settings_update(self._body()))
             if p == "/api/chatroom":
                 return self._json(api.chatroom_create(self._body()))
             if p == "/api/ad/reward":

@@ -490,6 +490,31 @@ class Store:
         return dict(self.c.execute(
             "SELECT * FROM users WHERE id=?", (uid,)).fetchone())
 
+    def update_user_profile(self, user_id: int, nickname: str | None = None,
+                            persona_name: str | None = None,
+                            persona_desc: str | None = None) -> dict:
+        """更新用户资料。只动传入的字段，None 表示不修改。
+
+        persona_name 是「用户自称」—— 角色扮演里模型会用它称呼用户
+        （实测回复里出现过 *She looks at Elara...*，那个 Elara 就来自这里）。
+        """
+        sets, args = [], []
+        if nickname is not None:
+            sets.append("nickname=?")
+            args.append(nickname)
+        if persona_name is not None:
+            sets.append("persona_name=?")
+            args.append(persona_name)
+        if persona_desc is not None:
+            sets.append("persona_desc=?")
+            args.append(persona_desc)
+        if sets:
+            args.append(user_id)
+            self.c.execute("UPDATE users SET %s WHERE id=?" % ", ".join(sets), args)
+            self.c.commit()
+        return dict(self.c.execute(
+            "SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
+
     def set_password(self, user_id: int, password_hash: str) -> None:
         self.c.execute("UPDATE users SET password_hash=? WHERE id=?",
                        (password_hash, user_id))

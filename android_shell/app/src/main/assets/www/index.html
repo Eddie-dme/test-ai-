@@ -265,6 +265,8 @@
   .pwform .authinput{height:34px;font-size:12.5px;padding:0 10px}
   .pwrow{display:flex;gap:6px}
   .pwrow .ub-btn{flex:1}
+  .pfdesc{height:58px;padding:8px 10px;resize:none;line-height:1.45;
+        font-family:inherit;font-size:12.5px}
 
   /* ---- 登录界面 ---- */
   .authgate{position:fixed;inset:0;z-index:200;display:flex;
@@ -344,6 +346,19 @@
     <div class="userbox">
       <div class="ub-who">
         <span id="userName">—</span>
+      </div>
+      <button class="ub-btn" id="btnEditProfile">Edit profile</button>
+      <div id="profileForm" class="pwform" style="display:none">
+        <input id="pfNickname" class="authinput" type="text" maxlength="40"
+               placeholder="Your nickname">
+        <input id="pfPersonaName" class="authinput" type="text" maxlength="40"
+               placeholder="What characters call you">
+        <textarea id="pfPersonaDesc" class="authinput pfdesc" maxlength="500"
+                  placeholder="Describe yourself (optional)"></textarea>
+        <div class="pwrow">
+          <button class="ub-btn" id="pfSubmit">Save</button>
+          <button class="ub-btn" id="pfCancel">Cancel</button>
+        </div>
       </div>
       <button class="ub-btn" id="btnChangePw">Change password</button>
       <div id="pwForm" class="pwform" style="display:none">
@@ -1492,6 +1507,57 @@ function renderAccount() {
   const u = state.user || {};
   $('#userName').textContent = u.nickname || (u.id ? 'User #' + u.id : '—');
 }
+
+/* 编辑资料。
+   personaName 是「角色怎么称呼你」—— 模型会把它用在回复里，
+   比如 *She looks at Elara...*。默认值来自种子数据，用户此前无法修改。 */
+$('#btnEditProfile').onclick = () => {
+  const f = $('#profileForm');
+  const opening = f.style.display === 'none';
+  if (opening) {
+    const u = state.user || {};
+    $('#pfNickname').value = u.nickname || '';
+    $('#pfPersonaName').value = u.personaName || '';
+    $('#pfPersonaDesc').value = u.personaDesc || '';
+  }
+  f.style.display = opening ? 'flex' : 'none';
+  if (opening) $('#pfNickname').focus();
+};
+
+$('#pfCancel').onclick = () => { $('#profileForm').style.display = 'none'; };
+
+$('#pfSubmit').onclick = async () => {
+  const btn = $('#pfSubmit');
+  const nickname = $('#pfNickname').value.trim();
+  if (!nickname) { toast('Nickname cannot be empty'); return; }
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const r = await api('/api/user/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        nickname: nickname,
+        personaName: $('#pfPersonaName').value.trim(),
+        personaDesc: $('#pfPersonaDesc').value.trim()
+      })
+    });
+    if (r.flag !== 0) throw new Error(r.msg || 'failed');
+    state.user = Object.assign({}, state.user, {
+      nickname: r.data.user.nickname,
+      personaName: r.data.persona.name,
+      personaDesc: r.data.persona.desc
+    });
+    renderAccount();
+    $('#profileForm').style.display = 'none';
+    toast('Profile saved');
+  } catch (e) {
+    toast('Could not save: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
+};
 
 /* 改密码。表单就地展开，不用原生 prompt() —— WebView 不实现它。
    改完服务端会吊销全部令牌（把可能存在的其他会话踢下线），
