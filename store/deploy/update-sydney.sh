@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+#
+# Vesperine —— 更新悉尼实例上的服务端
+#
+# 适用：不改服务器架构、继续用悉尼那台，只把代码从 9/23 的版本
+#       更新到最新（+1259 行：合规校验、编辑资料、首屏优化、
+#       立绘压缩、401 修复、WAL 维护）。
+#
+# 为什么不直接在实例上手敲：数据库要按 WAL 规则备份 ——
+# 直接 cp 会拿到过期快照（主库 356 KB / -wal 却有 4 MB）。
+#
+# 前置：SSH 可达（安全组要放行当前出口 IP，动态 IP 变了要重加）
+#
+# 用法：
+#   ./update-sydney.sh check     # 只探连通性与线上版本，不改动
+#   ./update-sydney.sh update    # 备份 → 拉代码 → 重启 → 验证
+#
+set -euo pipefail
+
+HOST_IP="${HOST_IP:-3.107.124.47}"
+RP_USER="${RP_USER:-ec2-user}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/vesperine-key.pem}"
+APP_DIR="/opt/vesperine"
+DB="$APP_DIR/floze_clone/floze.db"
+
+SSH=(ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes
+     "$RP_USER@$HOST_IP")
+SCP=(scp -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
+
+c()  { printf '\033[1;36m%s\033[0m\n' "$*"; }
+ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+no() { printf '  \033[31m✗\033[0m %s\n' "$*"; }
+die() { printf '\033[31m错误：%s\033[0m\n' "$*" >&2; exit 1; }
+
+# 目录属主是 vesperine，ec2-user 直接跑 git 会报 dubious ownership。
+# sudo 又不继承这个例外（它读的是调用者的 HOME），所以显式 -c 传进去。
+GIT=(sudo git -C "$APP_DIR" -c safe.directory="$APP_DIR")
+
+# 实例上**没有** sqlite3 命令行（实测），只能用 python3 的 sqlite3 模块。
+# 好处是它本来就装着（服务就是 Python 跑的）。
+BACKUP_PY='
+import sqlite3, sys
+src = sqlite3.connect("/opt/vesperine/floze_clone/floze.db")
+dst = sqlite3.connect(sys.argv[1])
+src.backup(dst)
+dst.close(); src.close()
+'
+
+need_ssh() {
+  "${SSH[@]}" true 2>/dev/null || die "SSH 不通。
+  安全组 22 只放行了旧的管理员出口 IP，它变过。
+  当前出口 IP 是：$(curl -fsS --max-time 8 https://checkip.amazonaws.com 2>/dev/null || echo '(取不到)')
+  要修安全组需要先 aws login 旧账号 —— 凭据已过期。"
+}
+
+do_check() {
+  c "1. SSH 连通性"
+  need_ssh && ok "已连上 $HOST_IP"
+
+  c "2. 实例上的代码版本"
+  "${SSH[@]}" "
+    ${GIT[*]} log --oneline -3
+    echo '  --- 与远端 main 的差距 ---'
+    sudo git -C $APP_DIR -c safe.directory=$APP_DIR fetch -q origin main
+    sudo git -C $APP_DIR -c safe.directory=$APP_DIR rev-list --count HEAD..origin/main | xargs echo '  落后提交数:'
+    echo '  --- 待部署的服务端改动 ---'
+    sudo git -C $APP_DIR -c safe.directory=$APP_DIR diff --stat HEAD..origin/main -- floze_clone/
+  "
+
+  c "3. 服务状态"
+  "${SSH[@]}" "
+    echo -n '  systemd: '; systemctl is-active vesperine
+    echo -n '  监听地址: '; sudo ss -lnt 2>/dev/null | grep 8080 | awk '{print \$4}' | head -1
+    echo '  ↑ 0.0.0.0 表示 8080 对公网开放（单元文件里的 Environment=HOST=0.0.0.0）'
+  "
+
+  c "4. 数据库现状（WAL 模式下主库大小会骗人）"
+  "${SSH[@]}" "ls -l $DB $DB-wal 2>/dev/null"
+
+  c "5. 当前后端是否含合规校验"
+  "${SSH[@]}" "grep -c TERMS_NOT_ACCEPTED $APP_DIR/floze_clone/server.py || echo 0"
+}
+
+do_update() {
+  need_ssh
+  c "0. 前置：数据库备份"
+  # sqlite3 的 backup API 是在线备份，会连同 WAL 里未落盘的内容一起快照。
+  # 直接用 cp 只复制主库文件，会漏掉 -wal 中的新数据 —— 这个坑踩过。
+  local stamp
+  stamp=$(date +%Y%m%d-%H%M%S)
+  "${SSH[@]}" "sudo -u vesperine python3 -c '$BACKUP_PY' /tmp/floze-$stamp.db && ls -l /tmp/floze-$stamp.db"
+  ok "备份到实例上的 /tmp/floze-$stamp.db"
+
+  # 顺手拉回本地一份 —— /tmp 会被清，且实例万一搞坏了本地还有
+  mkdir -p "$(dirname "$0")/backups"
+  "${SCP[@]}" "$RP_USER@$HOST_IP:/tmp/floze-$stamp.db" "$(dirname "$0")/backups/" >/dev/null
+  ok "已取回本地 $(dirname "$0")/backups/floze-$stamp.db"
+
+  c "1. 拉取最新代码"
+  "${SSH[@]}" "
+    sudo git -C $APP_DIR -c safe.directory=$APP_DIR fetch -q origin main
+    sudo git -C $APP_DIR -c safe.directory=$APP_DIR reset --hard origin/main
+    sudo git -C $APP_DIR -c safe.directory=$APP_DIR log --oneline -1
+  "
+
+  c "2. 重启服务"
+  # store.py 的 _migrate() 在启动时跑，会把旧库补到新 schema。
+  # 顺序上 _migrate 必须先于 executescript(SCHEMA)，否则索引引用新列会失败 ——
+  # 这点代码里已处理，这里只要重启即可。
+  "${SSH[@]}" "sudo systemctl restart vesperine && sleep 4 && systemctl is-active vesperine"
+
+  c "3. 验证"
+  "${SSH[@]}" "echo -n '  本机静态页 '; curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/;\
+    echo -n '  合规校验代码存在: '; grep -c TERMS_NOT_ACCEPTED $APP_DIR/floze_clone/server.py;\
+    echo -n '  8080 是否只监听本机: '; sudo ss -lnt 2>/dev/null | grep 8080 | awk '{print \$4}'"
+
+  echo
+  c "4. 公网验证（需 ACCESS_KEY，从 BuildConfig 读）"
+  local key
+  key=$(python3 - "$(dirname "$0")/../../android_shell/app/src/main/java/top/lurvy/vesperine/BuildConfig.java" <<'PY'
+import re, sys
+s = open(sys.argv[1], encoding='utf-8').read()
+m = re.search(r'ACCESS_KEY\s*=\s*"([^"]*)"', s)
+sys.stdout.write(m.group(1) if m else '')
+PY
+)
+  [ -n "$key" ] || { no "读不到 ACCESS_KEY，跳过公网验证"; return; }
+  printf '  不带 key（应 401）: '
+  curl -s -o /dev/null -w '%{http_code}\n' --max-time 20 "https://api.lurvy.top/api/config"
+  printf '  带 key（应 200）:   '
+  curl -s -o /dev/null -w '%{http_code}\n' --max-time 20 \
+    -H "X-Access-Key: $key" "https://api.lurvy.top/api/config"
+  printf '  首屏耗时:           '
+  curl -s -o /dev/null -w '%{time_total}s\n' --max-time 30 https://api.lurvy.top/
+
+  echo
+  ok "更新完成。日志：tail -f /var/log/vesperine.log"
+}
+
+case "${1:-}" in
+  check)  do_check ;;
+  update) do_update ;;
+  *)      sed -n '2,18p' "$0"; exit 1 ;;
+esac
