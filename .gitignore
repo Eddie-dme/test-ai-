@@ -102,3 +102,8 @@ HANDOFF.md
 # 模板见同目录 BuildConfig.java.template
 # ─────────────────────────────────────────────────────────
 android_shell/app/src/main/java/top/lurvy/vesperine/BuildConfig.java
+
+# ─────────────────────────────────────────────────────────
+# 部署前的数据库备份 —— 含真实用户数据
+# ─────────────────────────────────────────────────────────
+store/deploy/backups/

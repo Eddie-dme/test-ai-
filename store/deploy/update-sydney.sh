@@ -115,7 +115,15 @@ do_update() {
     echo -n '  8080 是否只监听本机: '; sudo ss -lnt 2>/dev/null | grep 8080 | awk '{print \$4}'"
 
   echo
-  c "4. 公网验证（需 ACCESS_KEY，从 BuildConfig 读）"
+  c "4. 公网验证"
+
+  # /api/config 在服务端需要登录（所有 /api/* 都要求），拿它验证 key 会误判：
+  # 未登录也是 401，与 key 错误无法区分。实测踩过这个坑。
+  # 改用 /api/auth/login —— 它在 /api/auth/ 下不需登录，只需 key，
+  # 于是三种结果泾渭分明：
+  #   不带 key / 错 key  → UNAUTHORIZED
+  #   带对 key           → INVALID_CREDENTIALS（业务逻辑跑到了）
+  #   服务端未配 ACCESS_KEY → 也走到业务逻辑
   local key
   key=$(python3 - "$(dirname "$0")/../../android_shell/app/src/main/java/top/lurvy/vesperine/BuildConfig.java" <<'PY'
 import re, sys
@@ -124,14 +132,35 @@ m = re.search(r'ACCESS_KEY\s*=\s*"([^"]*)"', s)
 sys.stdout.write(m.group(1) if m else '')
 PY
 )
-  [ -n "$key" ] || { no "读不到 ACCESS_KEY，跳过公网验证"; return; }
-  printf '  不带 key（应 401）: '
-  curl -s -o /dev/null -w '%{http_code}\n' --max-time 20 "https://api.lurvy.top/api/config"
-  printf '  带 key（应 200）:   '
-  curl -s -o /dev/null -w '%{http_code}\n' --max-time 20 \
-    -H "X-Access-Key: $key" "https://api.lurvy.top/api/config"
-  printf '  首屏耗时:           '
-  curl -s -o /dev/null -w '%{time_total}s\n' --max-time 30 https://api.lurvy.top/
+  if [ -z "$key" ]; then
+    no "读不到 ACCESS_KEY，跳过公网验证"
+  else
+    local probe='{"email":"nobody@example.com","password":"whatever123"}'
+    printf '  不带 key（应 UNAUTHORIZED）:       '
+    curl -s --max-time 20 -X POST https://api.lurvy.top/api/auth/login \
+      -H 'Content-Type: application/json' -d "$probe" | head -c 60; echo
+    printf '  带 key（应 INVALID_CREDENTIALS）:  '
+    curl -s --max-time 20 -X POST https://api.lurvy.top/api/auth/login \
+      -H 'Content-Type: application/json' -H "X-Access-Key: $key" -d "$probe" | head -c 60; echo
+    printf '  条款校验（应 TERMS_NOT_ACCEPTED）: '
+    curl -s --max-time 20 -X POST https://api.lurvy.top/api/auth/register \
+      -H 'Content-Type: application/json' -H "X-Access-Key: $key" \
+      -d "{\"email\":\"probe$RANDOM@example.com\",\"password\":\"ProbeOnly2026x\",\"nickname\":\"p\"}" | head -c 60; echo
+    printf '  首屏耗时:                          '
+    curl -s -o /dev/null -w '%{time_total}s\n' --max-time 30 https://api.lurvy.top/
+  fi
+
+  echo
+  c "5. 8080 是否已收敛"
+  # curl 失败时 http_code 是 000，它同样匹配 ^[0-9] —— 不能只用正则判断，
+  # 否则会把「连不上」误报成「仍可直达」。这里显式取码比对。
+  local code
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 12 "http://$HOST_IP:8080/" 2>/dev/null || echo 000)
+  if [ "$code" = "000" ]; then
+    ok "已收敛（直连 $HOST_IP:8080 连不上）"
+  else
+    no "仍可直达 $HOST_IP:8080（HTTP $code）—— 检查单元文件里的 Environment=HOST"
+  fi
 
   echo
   ok "更新完成。日志：tail -f /var/log/vesperine.log"
