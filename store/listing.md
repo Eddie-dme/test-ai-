@@ -61,8 +61,8 @@ ABOUT
 Vesperine is fiction, and it stays fiction. Every character is original and none of them are real people. Your conversations are yours.
 
 Support: eddie@lurvy.top
-Privacy: https://lurvy.top/privacy.html
-Terms: https://lurvy.top/terms.html
+Privacy: https://eddie-dme.github.io/test-ai-/privacy.html
+Terms: https://eddie-dme.github.io/test-ai-/terms.html
 ```
 
 约 2,150 字符。
@@ -144,19 +144,39 @@ Six characters at launch — each with their own voice, memory, and secrets. Hid
 
 # 待确认项
 
-**隐私政策与服务条款目前还不能用于提交。**
+**✅ 已解除（2026-10-09 实测）—— 隐私政策与服务条款已可用于提交。**
 
-`docs/privacy.html`、`docs/terms.html` 里仍有 8 处法律信息占位符未填：
+上文原先记录的 8 处法律信息占位符已全部填实。`docs/privacy.html` /
+`docs/terms.html` 现在写的是：
 
-- `[LEGAL ENTITY NAME]` — 4 处（privacy ×2、terms ×2）
-- `[REGISTERED ADDRESS]` — 3 处
-- `[JURISDICTION]` — 2 处
-- `[HOSTING REGION]`、`[PROVIDER REGION]` — 各 1 处
+```
+Lurvy Limited
+Room A1, 11/F, Winner Building, 36 Man Yue Street, Hung Hom, Kowloon, Hong Kong
+eddie@lurvy.top
+```
 
-另有 `docs/index.html` 1 处 `[GITHUB_USER]/[REPO_NAME]`。
+（`docs/index.html` 里的 `[GITHUB_USER]/[REPO_NAME]` 也已无残留。）
 
-这两件事都需要先落地，Play 与 App Store 的提交都会被它卡住：
+**公开可访问的 URL 已在线**（GitHub Pages，从 main 的 `/docs` 发布），实测：
 
-1. 填入上述法律信息（公司注册名、注册地址、管辖地、服务器区域）
-2. 隐私政策要点公开可访问 —— 取决于 `lurvy.top` 是否已解析到 GitHub Pages，
-   且本仓库尚未配置 git 远端，无法推送
+```
+https://eddie-dme.github.io/test-ai-/privacy.html   HTTP 200  9807B
+https://eddie-dme.github.io/test-ai-/terms.html     HTTP 200  9560B
+https://eddie-dme.github.io/test-ai-/index.html     HTTP 200  7189B
+```
+
+三页均与本地 `docs/` **逐字节一致**，标题正确，HTTPS 可用。
+
+**⚠️ 不要再用 `https://lurvy.top/privacy.html`** —— 实测 **404**：`lurvy.top`
+目前解析到另一个站点（标题为「lurvy.top | 智能营销增长伙伴」），
+不是本项目。提交给 Play / App Store 的必须是上面 GitHub Pages 的地址。
+
+App 内注册页引用的也正是该地址（`floze_clone/static/index.html` 第 329–332 行），
+内外一致，不存在拒审风险。
+
+Play 对政策页的要点要求（数据类型、共享对象、保留期限、用户权利、儿童、
+广告与同意、联系方式）在 `privacy.html` 的 11 个章节中均已覆盖。
+
+> 附：本节曾写「仓库尚未配置 git 远端，无法推送」—— 此条也已过时，
+> 远端已配好（`origin` = github.com/Eddie-dme/test-ai-），仅缺推送凭证。
+> 详见 `HANDOFF.md` 待办 3。

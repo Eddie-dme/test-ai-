@@ -3,6 +3,9 @@
 > 用途：注册 Play Console 时的「您在 Play 管理中心和 Android 方面的体验」字段
 > 状态：**待你补充真实信息**（下方 `[ ]` 处需替换）
 > ⚠️ 不要编造——Google 会交叉验证，造假会导致账号封禁且 $25 不退
+>
+> **2026-10-09 更新**：账号路线已定为**组织（企业）账号**（DUNS 已取得）
+> → 该字段改用下方**版本 D**；第 5.2 节的封闭测试门槛对企业账号不适用。
 
 ---
 
@@ -105,6 +108,39 @@ Android SDK 命令行工具链（aapt2 / javac / d8 / zipalign / apksigner），
 代码仓库：https://github.com/Eddie-dme/test-ai-
 ```
 
+### 版本 D —— 企业账号口吻（2026-10-09，DUNS 已取得）
+
+企业账号下这个字段仍要填，主语从「我」换成公司。其余事实与版本 C
+**完全一致** —— 不要为了匹配「企业身份」而夸大开发经验，Google 同样会交叉验证。
+
+```
+Lurvy Limited 是一家在香港注册的公司，主营面向中国出海企业的海外营销服务
+（媒体代理、全球网红资源与 AI 创意技术），运营网站 https://lurvy.top。
+
+Vesperine 是本公司在移动应用方向的自主开发项目，包含 Android 客户端、
+服务端与 Web 前端。Android 端使用 Java 编写，基于 WebView 容器；构建流程
+直接调用 Android SDK 命令行工具链（aapt2 / javac / d8 / zipalign / apksigner），
+未使用 Gradle，以便精确控制构建过程与产物体积。
+
+应用实现了 SSE 流式对话、账号体系与 Bearer 令牌鉴权、虚拟货币与应用内购、
+用户内容举报与处置机制、账号删除、内容分级适配等完整功能，并已完成上架
+所需的图标、特色图片、多套尺寸截图、商店文案、隐私政策与服务条款。
+
+服务端使用 Python 标准库实现（无第三方依赖），数据层为 SQLite，
+部署在云服务器上，通过 Nginx 反向代理对外提供服务。
+
+这是本公司首次注册 Google Play 开发者账号，此前没有在 Play 管理中心发布应用的
+经历；但已完整走通 Android 应用的开发、签名、打包与上架材料准备流程，
+并了解 Google Play 的政策要求（用户生成内容的举报机制、未成年人保护、
+数据安全披露、目标 API 级别等）。
+
+相关链接：
+- 公司网站：https://lurvy.top
+- 隐私政策：https://eddie-dme.github.io/test-ai-/privacy.html
+- 服务条款：https://eddie-dme.github.io/test-ai-/terms.html
+- 代码仓库：https://github.com/Eddie-dme/test-ai-
+```
+
 **使用的两个判断**：
 
 1. **Play 管理中心经验如实写「首次」** —— 这个字段的用途是筛掉批量注册的
@@ -144,28 +180,40 @@ Android SDK 命令行工具链（aapt2 / javac / d8 / zipalign / apksigner），
 | **DUNS** | **不需要** | **必须** |
 | 验证材料 | 身份证/护照 + 地址 | 组织文件 + DUNS |
 | 开发者显示名 | 个人名 | 公司名 |
+| **封闭测试** | **强制**（12 人 × 14 天） | **不需要** |
 
-**只是想把产品发出去验证 → 走个人账号，完全不碰 DUNS。**
+**✅ 2026-10-09 已定：走组织账号 —— DUNS 已取得。**
 
-### 5.2 ⚠️ 新个人账号的封闭测试门槛
+理由在 5.2：封闭测试门槛**只约束 2023-11-13 之后创建的个人账号**，
+组织账号不受限 —— 走企业账号反而**上架更快**，不必再等两周。
 
-新注册的个人开发者账号在发布生产版本前需通过封闭测试
-（印象中是 **12 名测试者连续 14 天**）。
+### 5.2 ⚠️ 封闭测试门槛 —— 只约束个人账号，**组织账号不需要**
 
-**这意味着就算账号明天批下来，还要再等两周才能上架。**
+**官方原文（2026-10-09 实测核实）**：
 
-测试者招募是纯人工工作、且**不需要账号** —— 建议今天就开始攒名单：
+> Testing requirements for **personal accounts** —— Developers with personal accounts
+> created after November 13, 2023, must run a closed test for their app with a
+> minimum of 12 testers who have been opted in continuously for at least 14 days.
+
+该页标题与正文全程限定 `personal accounts`；组织账号所需材料页
+（answer/13628312）不提此项。
+
+**走企业账号的直接好处**：省掉「12 人 × 14 天」这两周 ——
+身份验证通过后即可申请发布生产版。
+
+**（下面这段仅在你改走个人账号时才需要）**
+
+测试者招募是纯人工工作、且**不需要账号**：
 
 - [ ] 列 15–20 个候选（留冗余，会有人中途退出）
 - [ ] 确认每人有 Google 账号 + Android 手机
-- [ ] 把测试环境地址发给他们先体验
 - [ ] 账号下来后直接邀请进封闭测试
 
-**测试环境地址**（APK 已就绪）：
+**测试环境**（APK 已就绪，内置地址就是生产地址 `https://api.lurvy.top`）：
 
 ```
-服务端：HOST=0.0.0.0 PORT=8080 python3 server.py
 APK：   android_shell/out/vesperine-debug.apk
+线上：  https://api.lurvy.top    （前端 200；无 key 正确返回 UNAUTHORIZED）
 ```
 
 ### 5.3 内容分级
@@ -192,10 +240,40 @@ https://www.dnb.com/duns-number/lookup.html
 
 ---
 
-## 七、明天要做的事（按优先级）
+## 七、下一步（2026-10-09 按企业账号路线更新）
 
-- [ ] **1. 查 DUNS 是否已有**（如果有，直接省 30 天）— 让财务/法务查
-- [ ] **2. 确定账号类型**（个人 or 组织）
-- [ ] **3. 填「关于您」字段**（用上面版本 A / B 的草稿改）
-- [ ] **4. 开始攒封闭测试者名单**（12 人 × 14 天，最耗时）
-- [ ] 5. 准备隐私政策 URL（上架必需）
+**已完成**：
+
+- [x] ~~1. 查 DUNS~~ —— **已取得**
+- [x] ~~2. 确定账号类型~~ —— **组织账号**
+- [x] 隐私政策 URL —— 已在线：`https://eddie-dme.github.io/test-ai-/privacy.html`（实测 200）
+- [x] ~~封闭测试名单~~ —— 组织账号**豁免**，不再需要
+
+**现在只差这几步，全在注册表单里**：
+
+- [ ] **1. 填「关于您」字段** —— 用**版本 D**（企业口吻）
+- [ ] **2. 备齐下方清单里标 ⚠️ 的项**
+- [ ] **3. 提交注册并完成组织身份验证**
+- [ ] 4. 上架材料终检（截图 / 文案 / 隐私政策 URL 均已就绪）
+
+### 注册所需信息（官方清单 + 当前状态）
+
+| 项目 | 状态 |
+|---|---|
+| D-U-N-S number | ✅ 已取得 |
+| Organization name | ✅ Lurvy Limited |
+| Organization address | ✅ 香港红磡民裕街 36 号荣业大厦11 楼 A1 室（取自 Google Payments 资料） |
+| Organization website | ✅ https://lurvy.top（你公司官网，实测在线） |
+| Developer email | ✅ eddie@lurvy.top |
+| Contact email | ✅ eddie@lurvy.top |
+| **Organization phone number** | ⚠️ **待确认** |
+| **Contact name / phone** | ⚠️ **待确认** |
+| **Developer phone number** | ⚠️ **待确认（会公开显示）** |
+| Google Payments 组织资料 | ⚠️ **待确认是否已建** |
+
+**两个必须知道的点**（官方原文）：
+
+1. Google 会**公开显示** legal name、legal address、developer email、
+   developer phone 到你的 Play 开发者资料页。
+2. Contact 与 Developer 的邮箱、电话都要**用一次性密码验证**，
+   且必须在开发者账号有效期内保持可用。
