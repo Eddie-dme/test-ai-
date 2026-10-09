@@ -107,3 +107,7 @@ android_shell/app/src/main/java/top/lurvy/vesperine/BuildConfig.java
 # 部署前的数据库备份 —— 含真实用户数据
 # ─────────────────────────────────────────────────────────
 store/deploy/backups/
+
+# 空库备份的 SQLite 附属文件（读取时自动生成）
+floze_clone/floze.db.bak-shm
+floze_clone/floze.db.bak-wal
