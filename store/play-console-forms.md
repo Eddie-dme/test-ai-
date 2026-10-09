@@ -126,9 +126,45 @@ Password: VesperineReview2026
 
 ## 五、待确认项
 
-1. **广告是否已接入** —— 填表前必须确认。代码里是"预留未接"状态
-2. **注册地址** —— 隐私政策尚缺（`privacy.html` ×2、`terms.html` ×1），
-   Play 提交前必须补上
-3. **隐私政策 URL** —— `https://api.lurvy.top` 已可用，但隐私政策页面在
-   GitHub Pages：`https://eddie-dme.github.io/test-ai-/privacy.html`
-   （若是给商店填表用，这个 URL 可以接受）
+> **2026-10-09 复核：以下三项已全部确认，不必再犹豫。**
+
+**1. 广告是否已接入 —— ✅ 已确认：未接入，填「不含广告」**
+
+- Android 端只有 `MainActivity` + `BuildConfig`，无任何广告 SDK 依赖；
+  Manifest 只有 INTERNET 与 ACCESS_NETWORK_STATE
+- 前端也没有 admob / rewarded / interstitial 调用
+- 服务端 `server.py` 里确有 AdMob 配置位（`ADMOB_PUBLISHER` 等环境变量），
+  但**客户端没有消费它** → 对外仍是不含广告
+
+**2. 注册地址 —— ✅ 已解决**
+
+隐私政策与条款里的占位符已全部填实（`docs/privacy.html` / `terms.html`）：
+Lurvy Limited，香港红磡民裕街 36 号荣业大厦 11 楼 A1 室。
+（本文件此前写「尚缺 ×3」是 9/24 的旧状态，9/25 已更新。）
+
+**3. 隐私政策 URL —— ✅ 已确认可用地址**
+
+```
+https://eddie-dme.github.io/test-ai-/privacy.html   HTTP 200
+https://eddie-dme.github.io/test-ai-/terms.html     HTTP 200
+```
+
+⚠️ **不要用 `https://lurvy.top/privacy.html`** —— 实测 **404**
+（该域名目前指向另一个站点）。应用内注册页引用的也正是上述 GitHub Pages
+地址，内外一致。
+
+**补充核实（2026-10-09）**
+
+- **第三方数据共享**：实测只有 `api.minimax.io` 一家（llm / imagegen / tts
+  全部走它），与第 1 节的描述一致
+- **UGC 政策要求的举报与屏蔽均已实装**：
+  - 举报：`REPORT_REASONS` / `REPORT_TARGETS`（6 类目标），前端 `data-a="report"`
+  - 屏蔽：`creator_blocks` 表 + `/api/creator/block/update`，
+    前端角色页有「🚫 屏蔽」按钮
+
+**仍需你判断的一项**
+
+- **内容分级口径**：本文件第 2 节按实际内容分析给出 **Teen / 13+**，
+  但 HANDOFF 里另有一句「对标 FlOZE 属 Mature 17+」。两者不一致。
+  以实际内容为准填 Teen 是可辩护的；但如果产品定位偏成人向，
+  **如实填高比填低安全** —— 低报被抽查到会被下架。
