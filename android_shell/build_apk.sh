@@ -14,9 +14,14 @@
 set -e
 cd "$(dirname "$0")"
 
-# ---- 环境（按需修改）----
-export JAVA_HOME="${JAVA_HOME:-/Users/mobvista/Downloads/test/toolchain/zulu17.50.19-ca-jdk17.0.11-macosx_aarch64/zulu-17.jdk/Contents/Home}"
-export ANDROID_HOME="${ANDROID_HOME:-/Users/mobvista/Downloads/test/toolchain/android-sdk}"
+# ---- 环境：优先用外部传入的；否则自动在仓库的 toolchain/ 里找 ----
+# 目的：整个仓库拷到任何路径 / 任何用户名下都能直接构建，不必改脚本。
+TOOLCHAIN="$PWD/../toolchain"
+if [ -z "${JAVA_HOME:-}" ]; then
+  JAVA_HOME="$(ls -d "$TOOLCHAIN"/zulu*/*.jdk/Contents/Home 2>/dev/null | head -1)"
+fi
+export JAVA_HOME
+export ANDROID_HOME="${ANDROID_HOME:-$TOOLCHAIN/android-sdk}"
 
 BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
 PLATFORM="$ANDROID_HOME/platforms/android-36/android.jar"
