@@ -4,18 +4,20 @@ plugins {
 
 android {
     namespace 'top.lurvy.vesperine'
-    compileSdk 34
+    compileSdk 36
 
     defaultConfig {
         applicationId "top.lurvy.vesperine"
         minSdk 21
-        targetSdk 34
+        targetSdk 36
         versionCode 1
         versionName "0.1.0"
 
-        // ★ 测试服务器地址：改成你跑 server.py 那台机器的局域网 IP
-        //   可在 App 内长按标题栏临时修改（不重打包）
-        buildConfigField "String", "SERVER_URL", "\"http://3.107.124.47:8080\""
+        // 生产地址。注意：实际构建走 build_apk.sh / build_aab.sh，它们编译的是
+        // 手写的 BuildConfig.java（含 ACCESS_KEY，不进版本控制）。
+        // ⚠️ 若启用 Gradle 构建，会与那份手写类生成同名类而冲突，需二选一：
+        //    排除源码里的 BuildConfig.java，或关掉 buildFeatures.buildConfig。
+        buildConfigField "String", "SERVER_URL", "\"https://api.lurvy.top\""
     }
 
     buildTypes {

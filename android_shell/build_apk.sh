@@ -18,8 +18,8 @@ cd "$(dirname "$0")"
 export JAVA_HOME="${JAVA_HOME:-/Users/mobvista/Downloads/test/toolchain/zulu17.50.19-ca-jdk17.0.11-macosx_aarch64/zulu-17.jdk/Contents/Home}"
 export ANDROID_HOME="${ANDROID_HOME:-/Users/mobvista/Downloads/test/toolchain/android-sdk}"
 
-BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
-PLATFORM="$ANDROID_HOME/platforms/android-34/android.jar"
+BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+PLATFORM="$ANDROID_HOME/platforms/android-36/android.jar"
 APP="app/src/main"
 OUT="out"
 # ⚠️ keystore 必须放在 out/ 之外：out/ 每次构建都会被 rm -rf，
@@ -52,7 +52,7 @@ if [ -d "$APP/assets" ]; then
     --manifest "$APP/AndroidManifest.xml" \
     --java "$OUT/gen" \
     -A "$APP/assets" \
-    --min-sdk-version 21 --target-sdk-version 34 \
+    --min-sdk-version 21 --target-sdk-version 36 \
     --version-code 1 --version-name "0.1.0" \
     "$OUT/compiled/res.zip"
 else
@@ -61,7 +61,7 @@ else
     -I "$PLATFORM" \
     --manifest "$APP/AndroidManifest.xml" \
     --java "$OUT/gen" \
-    --min-sdk-version 21 --target-sdk-version 34 \
+    --min-sdk-version 21 --target-sdk-version 36 \
     --version-code 1 --version-name "0.1.0" \
     "$OUT/compiled/res.zip"
 fi

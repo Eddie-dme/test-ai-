@@ -80,6 +80,7 @@ floze_clone/              服务端 + Web 前端
 
 android_shell/            Android 客户端
 ├── build_apk.sh          直接调用 aapt2 / javac / d8 / apksigner
+├── build_aab.sh          同上工具链 + bundletool，产出上架用的 .aab
 └── app/src/main/
     ├── java/.../MainActivity.java    WebView 壳，支持运行时切换服务端地址
     └── assets/www/                   内嵌前端与立绘
@@ -104,6 +105,10 @@ floze_reverse/            模型接入验证
 （`aapt2 compile/link` → `javac` → `d8` → `zipalign` → `apksigner`）。
 构建时间从分钟级降到秒级，依赖也只有一个 JDK 和 Android SDK。
 
+上架 Google Play 需要的 AAB 同样不需要 Gradle：`build_aab.sh` 用
+`aapt2 link --proto-format` 输出 bundle tool 能直接吃下的资源格式，
+再交给 `bundletool build-bundle` 打包、`jarsigner` 签名。
+
 **移动端适配**
 窄屏（≤820px）下桌面双栏收敛为单栏，侧栏移入抽屉，由左上角按钮唤出；
 顶部工具栏自动换行；底部输入区避开手势条（`env(safe-area-inset-bottom)`）。
@@ -126,10 +131,15 @@ HOST=0.0.0.0 PORT=8080 python3 -u server.py
 
 ```bash
 cd android_shell
-./build_apk.sh                        # 产物在 out/vesperine-debug.apk
+./build_apk.sh                        # 测试包：out/vesperine-debug.apk
+
+export UPLOAD_KEYSTORE_PASS='<口令>'   # 上架包：release/vesperine-release.aab
+./build_aab.sh
 ```
 
 需先设置 `JAVA_HOME` 与 `ANDROID_HOME`（脚本内有说明）。
+AAB 构建另需 `bundletool`（脚本内路径可用 `BUNDLETOOL` 环境变量覆盖）。
+签名口令只经环境变量传递，不落盘。
 
 ---
 

@@ -103,6 +103,25 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
 
+        // Android 15+（targetSdk 35 起）强制 edge-to-edge：窗口铺满屏幕，系统栏变成
+        // 透明覆盖层。不自己留出空间的话，顶部工具栏会被状态栏压住、底部被手势条盖住。
+        // 旧版本系统已为窗口预留了空间，这里的 insets 会是 0，行为与改动前一致。
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            int top, bottom, left, right;
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars =
+                        insets.getInsets(android.view.WindowInsets.Type.systemBars());
+                top = bars.top; bottom = bars.bottom; left = bars.left; right = bars.right;
+            } else {
+                top = insets.getSystemWindowInsetTop();
+                bottom = insets.getSystemWindowInsetBottom();
+                left = insets.getSystemWindowInsetLeft();
+                right = insets.getSystemWindowInsetRight();
+            }
+            v.setPadding(left, top, right, bottom);
+            return insets;
+        });
+
         // ---- WebView 配置 ----
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
