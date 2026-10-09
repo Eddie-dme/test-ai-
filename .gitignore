@@ -108,6 +108,8 @@ android_shell/app/src/main/java/top/lurvy/vesperine/BuildConfig.java
 # ─────────────────────────────────────────────────────────
 store/deploy/backups/
 
-# 空库备份的 SQLite 附属文件（读取时自动生成）
+# 空库备份（曾误提交进公开仓库，2026-10-09 移除跟踪）
+floze_clone/floze.db.bak
+# 其 SQLite 附属文件（读取时自动生成）
 floze_clone/floze.db.bak-shm
 floze_clone/floze.db.bak-wal
