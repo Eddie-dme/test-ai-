@@ -435,6 +435,12 @@
 <script>
 const $ = s => document.querySelector(s);
 
+/* HTML 转义 —— 所有插进 innerHTML 的用户内容都必须过这一层。
+ * 少了它，一个名字叫 `<img src=x onerror=...>` 的自建角色，
+ * 就能在其他用户浏览列表时执行脚本（存储型 XSS），并窃取 localStorage 里的令牌。 */
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
 /* API 地址解析 —— 三种方式，按优先级：
  *   1. URL 参数：  http://host/page?api=http://192.168.1.10:8080
  *   2. 全局注入：  window.__VESPERINE_API__ = 'http://192.168.1.10:8080'
@@ -660,10 +666,10 @@ function fillRolesInto(box) {
     d.className = 'item';
     // 立绘：约定文件名 portrait-<name>.jpeg，缺失时自动隐藏
     const face = portraitUrl(r.name);
-    d.innerHTML = `<img class="face" src="${face}" alt="${r.name}"
+    d.innerHTML = `<img class="face" src="${face}" alt="${esc(r.name)}"
         loading="lazy" onerror="this.style.display='none'">
       <div style="min-width:0;flex:1">
-        <div class="n">${r.name}</div>
+        <div class="n">${esc(r.name)}</div>
         <div class="d">${r.description}</div>
         <div class="tags">${(r.tags||[]).slice(0,3).map(t=>`<span>${t}</span>`).join('')}</div>
       </div>`;
@@ -680,7 +686,7 @@ function fillRoomsInto(box) {
   state.rooms.forEach(c => {
     const d = document.createElement('div');
     d.className = 'item' + (state.chatroom && state.chatroom.id === c.id ? ' on' : '');
-    d.innerHTML = `<div class="n">${c.role_name}</div>
+    d.innerHTML = `<div class="n">${esc(c.role_name)}</div>
       <div class="d">${c.chat_mode} · ${new Date(c.updated_at*1000).toLocaleString()}</div>`;
     d.onclick = () => { navOpen(false); openRoom(c); };
     box.appendChild(d);
@@ -1050,7 +1056,7 @@ async function renderChapters() {
   const head = document.createElement('div');
   head.className = 'ch';
   const pct = Math.round(((d.affinity + 2000) / 4000) * 100);
-  head.innerHTML = `<div class="h"><span class="t">${state.role.name} · 隐藏章节</span>
+  head.innerHTML = `<div class="h"><span class="t">${esc(state.role.name)} · 隐藏章节</span>
       <span class="th">好感度 ${d.affinity} ｜ 已解锁 ${d.unlockedCount}/${d.total}</span></div>
     <div class="affbar"><i style="width:${pct}%"></i></div>`;;
   box.appendChild(head);
@@ -1249,8 +1255,8 @@ async function renderAlbum() {
   for (const it of items) {
     const cell = document.createElement('div');
     cell.className = 'cell';
-    cell.innerHTML = `<img src="${API_BASE}${it.url}" alt="${it.prompt}" loading="lazy">
-      <span class="tag">${it.source}${it.heart_cost ? ' · ' + it.heart_cost + '💖' : ' · 免费'}</span>`;
+    cell.innerHTML = `<img src="${API_BASE}${esc(it.url)}" alt="${esc(it.prompt)}" loading="lazy">
+      <span class="tag">${esc(it.source)}${it.heart_cost ? ' · ' + it.heart_cost + '💖' : ' · 免费'}</span>`;
     grid.appendChild(cell);
   }
   box.appendChild(grid);
