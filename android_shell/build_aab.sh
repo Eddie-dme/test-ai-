@@ -37,6 +37,12 @@ WORK="$OUT/.aab-build"          # 中间产物；不动 out/ 里已有的 APK
 KEYSTORE="${UPLOAD_KEYSTORE:-$PWD/upload-keystore.jks}"
 ALIAS="${UPLOAD_KEY_ALIAS:-upload}"
 AAB="$OUT/vesperine-release.aab"
+# 构建到临时文件，全部验证通过后才替换 $AAB。
+# 原因：失败时若直接就地覆盖，会留下一个「看起来存在、实际没签名」的 AAB，
+# 而 bundletool validate 照样能过 —— 这种垃圾产物比构建失败更难察觉。
+AAB_TMP="$OUT/.vesperine-release.aab.tmp"
+# 任何非正常退出（如签名失败）都清掉临时文件，不留下半个产物
+trap 'rm -f "$AAB_TMP"' EXIT
 
 echo "── 环境检查 ──"
 for f in "$JAVA_HOME/bin/javac" "$JAVA_HOME/bin/jarsigner" "$BUILD_TOOLS/aapt2" "$BUILD_TOOLS/d8" "$PLATFORM"; do
@@ -50,6 +56,16 @@ if [ -z "$UPLOAD_KEYSTORE_PASS" ]; then
   exit 1
 fi
 echo "✅ JDK / aapt2 / d8 / bundletool / keystore / android.jar 就绪"
+
+# jarsigner 真的能跑吗？文件存在 ≠ 能执行：换机后整个 toolchain 常被 macOS
+# 打上 com.apple.quarantine，Gatekeeper 会让 jarsigner 直接 SIGKILL（退出码 137）
+# 且毫无输出。那种情况下会一直跑到第 7 步才失败，产物还是个无签名的 AAB，
+# 而 bundletool validate 照样会过 —— 错误信息完全指不到根因。这里提前拦下来。
+if ! "$JAVA_HOME/bin/jarsigner" -help >/dev/null 2>&1; then
+  echo "❌ jarsigner 无法运行（常见原因：macOS quarantine 拦截）"
+  echo "   修复： xattr -dr com.apple.quarantine \"$TOOLCHAIN\""
+  exit 1
+fi
 
 rm -rf "$WORK"; mkdir -p "$OUT"; mkdir -p "$WORK"/{compiled,gen,classes,dex,module}
 
@@ -104,27 +120,29 @@ cp "../dex/classes.dex" dex/
 rm -f "../base.zip"
 zip -q -r -X "../base.zip" .
 cd - > /dev/null
-rm -f "$AAB"          # bundletool 拒绝覆盖已存在的输出文件
+rm -f "$AAB_TMP"          # bundletool 拒绝覆盖已存在的输出文件
 "$JAVA_HOME/bin/java" -jar "$BUNDLETOOL" build-bundle \
-  --modules="$WORK/base.zip" --output="$AAB"
-echo "✅ bundle 已生成：$(ls -lh "$AAB" | awk '{print $5}')"
+  --modules="$WORK/base.zip" --output="$AAB_TMP"
+echo "✅ bundle 已生成：$(ls -lh "$AAB_TMP" | awk '{print $5}')"
 
 echo
 echo "── 7/7 签名 + 验证（jarsigner / JAR 签名）──"
 "$JAVA_HOME/bin/jarsigner" -keystore "$KEYSTORE" \
   -storepass "$UPLOAD_KEYSTORE_PASS" -keypass "$UPLOAD_KEYSTORE_PASS" \
   -sigalg SHA256withRSA -digestalg SHA-256 \
-  "$AAB" "$ALIAS"
+  "$AAB_TMP" "$ALIAS"
 
 echo
 echo "── 验证 ──"
-"$JAVA_HOME/bin/jarsigner" -verify "$AAB" >/dev/null 2>&1 \
-  && echo "✅ JAR 签名有效" || { echo "❌ 签名验证失败"; exit 1; }
-"$JAVA_HOME/bin/java" -jar "$BUNDLETOOL" validate --bundle="$AAB" >/dev/null 2>&1 \
-  && echo "✅ bundle 结构有效（bundletool validate）" || { echo "❌ 结构校验失败"; exit 1; }
-"$JAVA_HOME/bin/jarsigner" -verify -verbose -certs "$AAB" 2>/dev/null \
+"$JAVA_HOME/bin/jarsigner" -verify "$AAB_TMP" >/dev/null 2>&1 \
+  && echo "✅ JAR 签名有效" || { echo "❌ 签名验证失败"; rm -f "$AAB_TMP"; exit 1; }
+"$JAVA_HOME/bin/java" -jar "$BUNDLETOOL" validate --bundle="$AAB_TMP" >/dev/null 2>&1 \
+  && echo "✅ bundle 结构有效（bundletool validate）" || { echo "❌ 结构校验失败"; rm -f "$AAB_TMP"; exit 1; }
+"$JAVA_HOME/bin/jarsigner" -verify -verbose -certs "$AAB_TMP" 2>/dev/null \
   | grep -m1 "CN=" | sed 's/^ */  签名者: /'
 
+# 到这里才算真的成功 —— 切换到正式产物（失败时旧产物原封不动）
+mv -f "$AAB_TMP" "$AAB"
 rm -rf "$WORK"
 
 echo
