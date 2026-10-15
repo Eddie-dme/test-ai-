@@ -303,6 +303,16 @@
         color:var(--dim);font:inherit;font-size:12.5px;cursor:pointer;
         text-decoration:underline;text-underline-offset:3px}
   .authlink:hover{color:var(--ink)}
+
+  /* ---- 矮视口（手机横屏）：侧栏整栏可滚动 ----
+     横屏时逻辑宽度 >820px，侧栏是常驻的；但视口高度只剩 400 上下，
+     brand/wallet/tabs/userbox 这些固定高度的块会把 .list（flex:1）压到
+     几乎为 0 —— 实测 914x411 下高度只剩 5.8px，角色列表等于看不见。
+     这里让 .list 按内容撑开、由 aside 整栏滚动。 */
+  @media (max-height:560px){
+    aside{overflow-y:auto}
+    .list{flex:1 0 auto;overflow:visible}
+  }
 </style>
 </head>
 <body>
@@ -1474,10 +1484,17 @@ $('#scrim').onclick = () => navOpen(false);
    桌面（有 hover 能力）保留 Enter / Shift+Enter 说明。 */
 if (window.matchMedia && window.matchMedia('(hover: none)').matches) {
   $('#input').placeholder = '说点什么…';
-  // 触屏没有「左侧栏」这个概念，引导语要指向 ☰ 按钮
-  const _empty = document.querySelector('#chat .empty');
-  if (_empty) _empty.textContent = '点击左上角 ☰ 选择角色';
 }
+/* 空状态引导语：窄屏侧栏藏在抽屉里，要指向 ☰；宽屏侧栏常驻，
+   直接说「左侧」。旋转屏幕会跨越断点，所以初始化和切换时都要同步，
+   否则横屏下会出现「点击左上角 ☰」而屏幕上根本没这个按钮。 */
+function syncEmptyHint() {
+  const el = document.querySelector('#chat .empty');
+  if (el) el.textContent = isNarrow()
+    ? '点击左上角 ☰ 选择角色'
+    : '从左侧选一个角色，点击「开始对话」';
+}
+syncEmptyHint();
 /* 宽窄切换时重排列表：从窄屏转宽屏要把角色列表从主区撤回侧栏，
    反之亦然。只在断点跨越时动作，避免无谓重绘。 */
 let _wasNarrow = isNarrow();
@@ -1485,6 +1502,7 @@ window.addEventListener('resize', () => {
   const now = isNarrow();
   if (now === _wasNarrow) return;
   _wasNarrow = now;
+  syncEmptyHint();
   if (state.tab === 'roles' || state.tab === 'rooms') switchTab(state.tab);
 });
 
