@@ -414,7 +414,6 @@
               style="font-size:11px;color:var(--gold);white-space:nowrap"></span>
         <select id="modeSel" title="聊天模式（对应 /chatMode 档位）"></select>
         <button class="ghost" id="btnChapters" title="隐藏章节">📖 章节</button>
-        <button class="ghost" id="btnAd" title="看广告换 hearts">📺 广告</button>
         <button class="ghost" id="btnMem" title="生成记忆摘要">🧠 记忆</button>
       </div>
     </div>
@@ -434,7 +433,6 @@
       </div>
       <div class="hint">
         <span id="cost">本次消耗：– 💖</span>
-        <span id="adInfo"></span>
       </div>
     </div>
   </main>
@@ -888,7 +886,7 @@ async function send() {
       if (btn) btn.onclick = (e) => { e.stopPropagation(); playSpeech(last.id, btn); };
     }
   }
-  refreshWallet(); refreshAd();
+  refreshWallet();
 }
 
 /* ---------- 举报（UGC 产品上架必需）----------
@@ -1388,29 +1386,11 @@ async function refreshWallet() {
   const r = await api('/api/heart/list');
   if (r.flag === 0) $('#hearts').textContent = r.data.heartInfo.amount;
 }
-async function refreshAd() {
-  const r = await api('/api/ad/times');
-  if (r.flag !== 0) return;
-  const chat = r.data.CHAT, daily = r.data.DAILY_HEART;
-  const mine = state.chatroom ? (chat.unredeemedChatroomIds || []).includes(state.chatroom.id) : false;
-  $('#adInfo').textContent =
-    `📺 聊天额度 ${chat.count}/${chat.limit}${mine ? ' · 本条已免费' : ''} ｜ 每日 hearts ${daily.count}/${daily.limit}`;
-}
 function updateCost() {
   const m = currentMode();
   $('#cost').textContent = m ? `本次消耗：${m.heartCost} 💖（${m.id} → ${m.model}）` : '本次消耗：–';
 }
 
-$('#btnAd').onclick = async () => {
-  const kind = state.chatroom ? 'CHAT' : 'DAILY_HEART';
-  const r = await api('/api/ad/reward', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ type: kind, chatroomId: state.chatroom ? state.chatroom.id : null })
-  });
-  if (r.flag !== 0) return toast('广告额度已用尽（' + r.msg + '）');
-  toast(kind === 'CHAT' ? '已获得：本会话下一条消息免费' : `已获得 ${r.data.hearts} 💖`);
-  refreshWallet(); refreshAd();
-};
 $('#btnMem').onclick = async () => {
   if (!state.chatroom) return toast('请先进入一个会话');
   const r = await api('/api/memory/summarize', {
@@ -1777,14 +1757,6 @@ function applyBootstrap(d) {
 
   if (d.heartInfo && d.heartInfo.amount !== undefined) {
     $('#hearts').textContent = d.heartInfo.amount;
-  }
-  if (d.adTimes && d.adTimes.CHAT && d.adTimes.DAILY_HEART) {
-    const chat = d.adTimes.CHAT, daily = d.adTimes.DAILY_HEART;
-    const mine = state.chatroom
-      ? (chat.unredeemedChatroomIds || []).includes(state.chatroom.id) : false;
-    $('#adInfo').textContent =
-      `📺 聊天额度 ${chat.count}/${chat.limit}${mine ? ' · 本条已免费' : ''}` +
-      ` ｜ 每日 hearts ${daily.count}/${daily.limit}`;
   }
   renderAccount();
   return true;

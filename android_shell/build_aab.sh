@@ -79,7 +79,7 @@ echo "── 2/7 链接资源（普通模式，生成 R.java 供 javac）──"
 "$BUILD_TOOLS/aapt2" link -o "$WORK/ref.apk" -I "$PLATFORM" \
   --manifest "$APP/AndroidManifest.xml" --java "$WORK/gen" \
   --min-sdk-version 21 --target-sdk-version 36 \
-  --version-code 1 --version-name "0.1.0" \
+  --version-code 2 --version-name "0.1.0" \
   "$WORK/compiled/res.zip"
 echo "✅ R.java 生成于 $WORK/gen"
 
@@ -105,7 +105,7 @@ echo "── 5/7 链接资源（--proto-format，AAB 用）──"
   --manifest "$APP/AndroidManifest.xml" \
   -A "$APP/assets" \
   --min-sdk-version 21 --target-sdk-version 36 \
-  --version-code 1 --version-name "0.1.0" \
+  --version-code 2 --version-name "0.1.0" \
   "$WORK/compiled/res.zip"
 echo "✅ proto 资源已生成"
 

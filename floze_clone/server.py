@@ -107,6 +107,10 @@ PAYMENT_MODE = _os.environ.get("PAYMENT_MODE", "stub")
 
 # 广告冷却（秒）—— 对齐实测到的默认冷却 90s
 AD_COOLDOWN = 90
+# 广告奖励开关。v1.0 关闭：客户端从未接入广告 SDK，前端若保留「看广告换
+# hearts」入口就是虚假功能（Play 政策明令禁止，审核会拒）。
+# v1.1 接入 AdMob 后，设 ADS_ENABLED=1 并完成原生 SDK 对接再打开。
+ADS_ENABLED = os.environ.get("ADS_ENABLED", "0").strip() == "1"
 
 # 免费额度（对齐 Vesperine 的 freeQuotaType）
 FREE_QUOTA = {"suggestReply": 5, "roleUgc": 3, "momentPost": 3, "momentComment": 5}
@@ -347,7 +351,13 @@ class API:
         return ok(quota)
 
     def ad_reward(self, body: dict) -> dict:
-        """广告奖励：CHAT → 该会话下一条消息免费；DAILY_HEART → 直接给 hearts。"""
+        """广告奖励：CHAT → 该会话下一条消息免费；DAILY_HEART → 直接给 hearts。
+
+        v1.0 默认关闭（ADS_ENABLED=0）：没有接入广告 SDK 就发奖励，等于让
+        任何人白拿 hearts。前端入口已同步移除，这里再兜一层，防止直接调 API。
+        """
+        if not ADS_ENABLED:
+            return err("ADS_DISABLED")
         u = self.s.ensure_user()
         ad_type = body.get("type", "DAILY_HEART")
         chatroom_id = body.get("chatroomId")

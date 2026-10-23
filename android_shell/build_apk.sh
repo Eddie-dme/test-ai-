@@ -58,7 +58,7 @@ if [ -d "$APP/assets" ]; then
     --java "$OUT/gen" \
     -A "$APP/assets" \
     --min-sdk-version 21 --target-sdk-version 36 \
-    --version-code 1 --version-name "0.1.0" \
+    --version-code 2 --version-name "0.1.0" \
     "$OUT/compiled/res.zip"
 else
   "$BUILD_TOOLS/aapt2" link \
@@ -67,7 +67,7 @@ else
     --manifest "$APP/AndroidManifest.xml" \
     --java "$OUT/gen" \
     --min-sdk-version 21 --target-sdk-version 36 \
-    --version-code 1 --version-name "0.1.0" \
+    --version-code 2 --version-name "0.1.0" \
     "$OUT/compiled/res.zip"
 fi
 echo "✅ 资源已链接，R.java 生成于 $OUT/gen"
