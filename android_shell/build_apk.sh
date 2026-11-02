@@ -57,8 +57,8 @@ if [ -d "$APP/assets" ]; then
     --manifest "$APP/AndroidManifest.xml" \
     --java "$OUT/gen" \
     -A "$APP/assets" \
-    --min-sdk-version 21 --target-sdk-version 36 \
-    --version-code 2 --version-name "0.1.0" \
+    --min-sdk-version 24 --target-sdk-version 36 \
+    --version-code 3 --version-name "0.1.0" \
     "$OUT/compiled/res.zip"
 else
   "$BUILD_TOOLS/aapt2" link \
@@ -66,8 +66,8 @@ else
     -I "$PLATFORM" \
     --manifest "$APP/AndroidManifest.xml" \
     --java "$OUT/gen" \
-    --min-sdk-version 21 --target-sdk-version 36 \
-    --version-code 2 --version-name "0.1.0" \
+    --min-sdk-version 24 --target-sdk-version 36 \
+    --version-code 3 --version-name "0.1.0" \
     "$OUT/compiled/res.zip"
 fi
 echo "✅ 资源已链接，R.java 生成于 $OUT/gen"
@@ -85,7 +85,7 @@ echo "✅ 编译完成（$CLS 个 class）"
 
 echo
  echo "── 4/5 转 dex（d8）──"
-"$BUILD_TOOLS/d8" --release --min-api 21 --lib "$PLATFORM" \
+"$BUILD_TOOLS/d8" --release --min-api 24 --lib "$PLATFORM" \
   --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
 [ -f "$OUT/dex/classes.dex" ] || { echo "❌ dex 生成失败"; exit 1; }
 echo "✅ dex 生成：$(ls -lh "$OUT/dex/classes.dex" | awk '{print $5}')"

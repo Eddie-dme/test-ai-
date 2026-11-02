@@ -78,8 +78,8 @@ echo
 echo "── 2/7 链接资源（普通模式，生成 R.java 供 javac）──"
 "$BUILD_TOOLS/aapt2" link -o "$WORK/ref.apk" -I "$PLATFORM" \
   --manifest "$APP/AndroidManifest.xml" --java "$WORK/gen" \
-  --min-sdk-version 21 --target-sdk-version 36 \
-  --version-code 2 --version-name "0.1.0" \
+  --min-sdk-version 24 --target-sdk-version 36 \
+  --version-code 3 --version-name "0.1.0" \
   "$WORK/compiled/res.zip"
 echo "✅ R.java 生成于 $WORK/gen"
 
@@ -94,7 +94,7 @@ echo "✅ 编译完成（$CLS 个 class）"
 
 echo
 echo "── 4/7 转 dex（d8）──"
-"$BUILD_TOOLS/d8" --release --min-api 21 --lib "$PLATFORM" \
+"$BUILD_TOOLS/d8" --release --min-api 24 --lib "$PLATFORM" \
   --output "$WORK/dex" $(find "$WORK/classes" -name '*.class')
 [ -f "$WORK/dex/classes.dex" ] || { echo "❌ dex 生成失败"; exit 1; }
 echo "✅ dex：$(ls -lh "$WORK/dex/classes.dex" | awk '{print $5}')"
@@ -104,8 +104,8 @@ echo "── 5/7 链接资源（--proto-format，AAB 用）──"
 "$BUILD_TOOLS/aapt2" link --proto-format -o "$WORK/proto.apk" -I "$PLATFORM" \
   --manifest "$APP/AndroidManifest.xml" \
   -A "$APP/assets" \
-  --min-sdk-version 21 --target-sdk-version 36 \
-  --version-code 2 --version-name "0.1.0" \
+  --min-sdk-version 24 --target-sdk-version 36 \
+  --version-code 3 --version-name "0.1.0" \
   "$WORK/compiled/res.zip"
 echo "✅ proto 资源已生成"
 
