@@ -32,6 +32,14 @@ BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
 PLATFORM="$ANDROID_HOME/platforms/android-36/android.jar"
 BUNDLETOOL="${BUNDLETOOL:-$PWD/../toolchain/bundletool-all-1.18.3.jar}"
 APP="app/src/main"
+# ── 版本号（唯一真源）──────────────────────────────────────────────
+# 每次上架递增。Play 拒绝重复 versionCode，而它散落在 aapt2 的两次 link 调用里，
+# 手改极易漏掉一处（漏了会打出一个旧版本号的包，上传时才发现）。
+# 改这里一处即可；app/build.gradle 里还有一份声明，仅作文档参考，不走 Gradle。
+VERSION_CODE=4
+VERSION_NAME="0.1.0"
+# ──────────────────────────────────────────────────────────────
+
 OUT="release"                     # 独立目录：build_apk.sh 会 rm -rf out/，不能共用
 WORK="$OUT/.aab-build"          # 中间产物；不动 out/ 里已有的 APK
 KEYSTORE="${UPLOAD_KEYSTORE:-$PWD/upload-keystore.jks}"
@@ -79,7 +87,7 @@ echo "── 2/7 链接资源（普通模式，生成 R.java 供 javac）──"
 "$BUILD_TOOLS/aapt2" link -o "$WORK/ref.apk" -I "$PLATFORM" \
   --manifest "$APP/AndroidManifest.xml" --java "$WORK/gen" \
   --min-sdk-version 24 --target-sdk-version 36 \
-  --version-code 3 --version-name "0.1.0" \
+  --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \
   "$WORK/compiled/res.zip"
 echo "✅ R.java 生成于 $WORK/gen"
 
@@ -105,7 +113,7 @@ echo "── 5/7 链接资源（--proto-format，AAB 用）──"
   --manifest "$APP/AndroidManifest.xml" \
   -A "$APP/assets" \
   --min-sdk-version 24 --target-sdk-version 36 \
-  --version-code 3 --version-name "0.1.0" \
+  --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \
   "$WORK/compiled/res.zip"
 echo "✅ proto 资源已生成"
 

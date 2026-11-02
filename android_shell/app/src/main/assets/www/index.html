@@ -23,6 +23,25 @@
   .wallet{padding:10px 16px;border-bottom:1px solid var(--line);font-size:12px;
           display:flex;justify-content:space-between;align-items:center}
   .wallet b{color:var(--gold);font-size:15px}
+  /* 「+」补心入口 —— 没有它用户就找不到获得 hearts 的途径 */
+  .wallet .earn{margin-left:6px;padding:2px 8px;font-size:11px;line-height:1.5;
+          border:1px solid var(--line);border-radius:10px;background:none;
+          color:var(--gold);cursor:pointer;transition:.2s}
+  .wallet .earn:hover{border-color:var(--gold);background:rgba(212,175,55,.08)}
+  .wallet .earn.on{color:var(--rose);border-color:var(--rose)}
+  /* 任务面板 */
+  .qp-row{display:flex;align-items:center;gap:10px;padding:9px 11px;margin-bottom:6px;
+          border-radius:9px;background:var(--panel2);border:1px solid var(--line)}
+  .qp-row.done{border-color:rgba(212,175,55,.4)}
+  .qp-main{flex:1;min-width:0}
+  .qp-title{font-size:12.5px;margin-bottom:3px}
+  .qp-meta{font-size:10.5px;color:var(--dim);display:flex;gap:8px;align-items:center}
+  .qp-bar{height:3px;border-radius:2px;background:rgba(255,255,255,.07);margin-top:5px;overflow:hidden}
+  .qp-bar i{display:block;height:100%;background:var(--gold);border-radius:2px}
+  .qp-btn{padding:5px 11px;font-size:11.5px;border-radius:9px;border:1px solid var(--line);
+          background:none;color:var(--dim);cursor:default;white-space:nowrap}
+  .qp-btn.ready{color:#1a1526;background:var(--gold);border-color:var(--gold);cursor:pointer}
+  .qp-h{font-size:12px;color:var(--dim);margin:14px 0 8px;letter-spacing:.04em}
   .tab{display:flex;border-bottom:1px solid var(--line)}
   .tab button{flex:1;padding:9px;background:none;border:0;color:var(--dim);
               cursor:pointer;font-size:12px}
@@ -356,7 +375,11 @@
       <p id="apiHint" style="margin-top:4px;font-size:10px;color:var(--dim)"></p>
     </div>
     <div class="wallet">
-      <span>💖 Hearts</span><b id="hearts">–</b>
+      <span>💖 Hearts</span>
+      <span style="display:flex;align-items:center;gap:2px">
+        <b id="hearts">–</b>
+        <button class="earn" id="btnEarn" title="如何获得 Hearts">+</button>
+      </span>
     </div>
     <div class="tab">
       <button id="tabRoles" class="on">角色</button>
@@ -855,7 +878,7 @@ async function send() {
     if (resp.headers.get('content-type')?.includes('application/json')) {
       const j = await resp.json();
       bubble.textContent = '';
-      toast(j.msg === 'NOT_ENOUGH_HEARTS' ? '💖 Hearts 不足，暂时无法继续这条对话' : ('发送失败：' + j.msg));
+      toast(j.msg === 'NOT_ENOUGH_HEARTS' ? '💖 Hearts 不足 —— 点左侧 Hearts 旁的「+」做任务领取' : ('发送失败：' + j.msg));
       state.sending = false; $('#send').disabled = false; return;
     }
     const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = '';
@@ -981,6 +1004,107 @@ async function openReport(targetType, targetId) {
   };
 }
 
+/* ---------- Hearts 获取途径（任务面板）----------
+   后端 /quest/* 一直是完整的（6 个任务、track() 已在 7 处推进进度），
+   但从未被前端调用 —— 用户注册拿到 30 hearts 后无任何补充手段，
+   聊完就彻底卡死。这个面板就是补上那个缺口。 */
+async function openQuests() {
+  const r = await api('/api/quest/dashboard');
+  if (r.flag !== 0) return toast(r.msg || '任务服务暂不可用');
+  const d = r.data || {};
+
+  const mask = document.createElement('div');
+  mask.style.cssText =
+    'position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:200;'
+    + 'display:flex;align-items:center;justify-content:center;padding:24px';
+  mask.innerHTML =
+    '<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;'
+    + 'padding:20px;width:100%;max-width:360px;max-height:80vh;overflow-y:auto">'
+    + '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">'
+    + '<div style="font-size:15px;font-weight:600">Earn Hearts</div>'
+    + '<div style="font-size:12px;color:var(--gold)">💖 <b id="qpBal">–</b></div>'
+    + '</div>'
+    + '<div style="font-size:11.5px;color:var(--dim);margin-bottom:14px">'
+    + 'Tasks reset daily. Tap Claim once a task is complete.</div>'
+    + '<div id="qpBody"></div>'
+    + '<button class="ghost" id="qpClose" style="width:100%;padding:10px;margin-top:14px">Close</button>'
+    + '</div>';
+  document.body.appendChild(mask);
+  const close = () => { mask.remove(); refreshWallet(); };
+  mask.querySelector('#qpClose').onclick = close;
+  mask.onclick = e => { if (e.target === mask) close(); };
+
+  const balEl = mask.querySelector('#qpBal');
+  const body = mask.querySelector('#qpBody');
+
+  const draw = (data) => {
+    const wallet = (data.stats && data.stats.hearts);
+    if (typeof wallet === 'number') balEl.textContent = wallet;
+    body.innerHTML = '';
+
+    const section = (title, items) => {
+      if (!items || !items.length) return;
+      const h = document.createElement('div');
+      h.className = 'qp-h'; h.textContent = title;
+      body.appendChild(h);
+      items.forEach(q => {
+        const row = document.createElement('div');
+        row.className = 'qp-row' + (q.completed ? ' done' : '');
+        const pct = Math.min(100, Math.round((q.progress / q.target) * 100));
+        row.innerHTML =
+          '<div class="qp-main">'
+          + '<div class="qp-title">' + esc(q.title) + '</div>'
+          + '<div class="qp-meta"><span>' + esc(q.description) + '</span></div>'
+          + '<div class="qp-bar"><i style="width:' + pct + '%"></i></div>'
+          + '<div class="qp-meta" style="margin-top:4px">'
+          + '<span>' + q.progress + '/' + q.target + '</span>'
+          + '<span style="color:var(--gold)">+' + q.reward_hearts + ' 💖</span></div>'
+          + '</div>';
+        const btn = document.createElement('button');
+        btn.className = 'qp-btn' + (q.claimable ? ' ready' : '');
+        btn.textContent = q.claimed ? 'Done'
+          : (q.completed ? 'Claim' : 'In progress');
+        if (q.claimable) {
+          btn.onclick = async () => {
+            btn.disabled = true; btn.textContent = '…';
+            const cr = await api('/api/quest/claim', {
+              method: 'POST', headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ questId: q.id })
+            });
+            if (cr.flag !== 0) {
+              toast(cr.msg || '领取失败');
+              btn.disabled = false; btn.textContent = 'Claim';
+              return;
+            }
+            if (cr.data && cr.data.balance !== undefined) {
+              $('#hearts').textContent = cr.data.balance;
+              balEl.textContent = cr.data.balance;
+            }
+            toast('+' + cr.data.hearts + ' 💖');
+            const nr = await api('/api/quest/dashboard');
+            if (nr.flag === 0) draw(nr.data);
+          };
+        }
+        row.appendChild(btn);
+        body.appendChild(row);
+      });
+    };
+
+    section('DAILY', data.daily);
+    section('GOALS', data.goals);
+    if (!data.daily?.length && !data.goals?.length) {
+      body.innerHTML = '<div style="font-size:12px;color:var(--dim)">No tasks available.</div>';
+    }
+  };
+
+  // 余额优先从心跳接口取 —— dashboard.stats 不一定带 hearts
+  const hb = await api('/api/heart/list');
+  if (hb.flag === 0 && hb.data?.heartInfo) {
+    balEl.textContent = hb.data.heartInfo.amount;
+  }
+  draw(d);
+}
+
 /* ---------- 广场（动态流）---------- */
 async function renderFeed() {
   const box = $('#feed');
@@ -1003,7 +1127,7 @@ async function renderFeed() {
       body: JSON.stringify({ content: t })
     });
     if (r.flag !== 0) {
-      return toast(r.msg === 'NOT_ENOUGH_HEARTS' ? 'Hearts 不足' : '发布失败：' + r.msg);
+      return toast(r.msg === 'NOT_ENOUGH_HEARTS' ? '💖 Hearts 不足 —— 点左侧「+」做任务领取' : '发布失败：' + r.msg);
     }
     toast(r.data.cost === 0 ? '已发布（免费额度）' : `已发布，消耗 ${r.data.cost} 💖`);
     refreshWallet(); renderFeed();
@@ -1069,7 +1193,7 @@ async function renderFeed() {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ momentId: m.id, content: t })
         });
-        if (rr.flag !== 0) return toast(rr.msg === 'NOT_ENOUGH_HEARTS' ? 'Hearts 不足' : rr.msg);
+        if (rr.flag !== 0) return toast(rr.msg === 'NOT_ENOUGH_HEARTS' ? '💖 Hearts 不足 —— 点左侧「+」做任务领取' : rr.msg);
         refreshWallet(); renderFeed();
       };
     };
@@ -1269,7 +1393,7 @@ async function renderAlbum() {
     });
     if (r.flag !== 0) {
       st.textContent = '';
-      return toast(r.msg === 'NOT_ENOUGH_HEARTS' ? 'Hearts 不足' : r.msg);
+      return toast(r.msg === 'NOT_ENOUGH_HEARTS' ? '💖 Hearts 不足 —— 点左侧「+」做任务领取' : r.msg);
     }
     st.textContent = '';
     toast(`生成 ${r.data.count} 张，消耗 ${r.data.cost}💖`);
@@ -1415,6 +1539,8 @@ function updateCost() {
   const m = currentMode();
   $('#cost').textContent = m ? `本次消耗：${m.heartCost} 💖（${m.id} → ${m.model}）` : '本次消耗：–';
 }
+
+$('#btnEarn').onclick = () => openQuests();
 
 $('#btnMem').onclick = async () => {
   if (!state.chatroom) return toast('请先进入一个会话');

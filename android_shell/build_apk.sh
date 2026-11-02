@@ -26,6 +26,10 @@ export ANDROID_HOME="${ANDROID_HOME:-$TOOLCHAIN/android-sdk}"
 BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
 PLATFORM="$ANDROID_HOME/platforms/android-36/android.jar"
 APP="app/src/main"
+
+# 版本号（与 build_aab.sh 保持一致，改一处记得同步另一处）
+VERSION_CODE=4
+VERSION_NAME="0.1.0"
 OUT="out"
 # ⚠️ keystore 必须放在 out/ 之外：out/ 每次构建都会被 rm -rf，
 # 放在里面会导致每次重新生成密钥 → 签名变化 → 手机无法覆盖安装。
@@ -58,7 +62,7 @@ if [ -d "$APP/assets" ]; then
     --java "$OUT/gen" \
     -A "$APP/assets" \
     --min-sdk-version 24 --target-sdk-version 36 \
-    --version-code 3 --version-name "0.1.0" \
+    --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \
     "$OUT/compiled/res.zip"
 else
   "$BUILD_TOOLS/aapt2" link \
@@ -67,7 +71,7 @@ else
     --manifest "$APP/AndroidManifest.xml" \
     --java "$OUT/gen" \
     --min-sdk-version 24 --target-sdk-version 36 \
-    --version-code 3 --version-name "0.1.0" \
+    --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \
     "$OUT/compiled/res.zip"
 fi
 echo "✅ 资源已链接，R.java 生成于 $OUT/gen"
