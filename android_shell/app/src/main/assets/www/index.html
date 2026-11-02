@@ -1080,9 +1080,16 @@ async function openQuests() {
               $('#hearts').textContent = cr.data.balance;
               balEl.textContent = cr.data.balance;
             }
-            toast('+' + cr.data.hearts + ' 💖');
+            toast('+' + (cr.data?.hearts ?? '') + ' 💖');
             const nr = await api('/api/quest/dashboard');
-            if (nr.flag === 0) draw(nr.data);
+            if (nr.flag === 0) {
+              draw(nr.data);
+            } else {
+              // 领取已成功但刷新失败（网络抖动）：不能把按钮留在「Claim」，
+              // 否则用户再点一次会看到 already claimed，误解成白领了。
+              btn.textContent = 'Done'; btn.classList.remove('ready');
+              btn.disabled = true;
+            }
           };
         }
         row.appendChild(btn);
