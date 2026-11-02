@@ -148,10 +148,16 @@ def bootstrap(store: Store) -> None:
                               ch["title"], ch["intro"], ch["content"])
 
     # 任务 / 成就 / 贴纸（幂等：靠 code / name 唯一约束）
+    # 任务用 upsert 而不是 INSERT OR IGNORE：奖励数值是产品参数，
+    # 改了 seed 就必须让**存量库**也跟着生效，否则老用户跑的还是旧经济。
     for q in QUESTS:
         store.c.execute(
-            "INSERT OR IGNORE INTO quests (type, code, title, description, target,"
-            " reward_hearts, event_key) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO quests (type, code, title, description, target,"
+            " reward_hearts, event_key) VALUES (?,?,?,?,?,?,?)"
+            " ON CONFLICT(code) DO UPDATE SET"
+            " title=excluded.title, description=excluded.description,"
+            " target=excluded.target, reward_hearts=excluded.reward_hearts,"
+            " event_key=excluded.event_key",
             (q["type"], q["code"], q["title"], q["description"],
              q["target"], q["reward_hearts"], q["event_key"]))
     for a in ACHIEVEMENTS:

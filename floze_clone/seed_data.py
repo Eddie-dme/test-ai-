@@ -109,16 +109,20 @@ ROLES = [
 #   type: daily（每日重置）| goal（长期）
 #   event_key: 触发埋点，与 user_quests.progress 联动
 #
+# ⚠️ 奖励必须**高于**任务本身的消耗，否则用户越做越穷、等于没修死锁。
+#   实测消耗：classic 档每条消息 2 hearts、发动态 3、评论 2。
+#   原值（5/3/2）全做完净 −1 —— 下面按「日常合计净 +15」重新定，
+#   约等于每天多出 7 条 classic 对话的额度。数值可调，但别再低于消耗。
 QUESTS = [
     {"type": "daily", "code": "daily_chat_3",  "title": "Talk three times",
      "description": "Send 3 messages to any character",
-     "target": 3, "reward_hearts": 5, "event_key": "chat"},
+     "target": 3, "reward_hearts": 12, "event_key": "chat"},
     {"type": "daily", "code": "daily_moment_1", "title": "Share a moment",
      "description": "Post one update to the feed",
-     "target": 1, "reward_hearts": 3, "event_key": "moment"},
+     "target": 1, "reward_hearts": 8, "event_key": "moment"},
     {"type": "daily", "code": "daily_comment_1", "title": "Leave a comment",
      "description": "Comment on someone's post",
-     "target": 1, "reward_hearts": 2, "event_key": "comment"},
+     "target": 1, "reward_hearts": 6, "event_key": "comment"},
     {"type": "goal",  "code": "goal_create_role", "title": "Become a creator",
      "description": "Create your first character",
      "target": 1, "reward_hearts": 30, "event_key": "role_create"},
@@ -127,7 +131,7 @@ QUESTS = [
      "target": 1, "reward_hearts": 20, "event_key": "chapter_unlock"},
     {"type": "goal",  "code": "goal_image",     "title": "See them clearly",
      "description": "Generate your first image",
-     "target": 1, "reward_hearts": 10, "event_key": "image"},
+     "target": 1, "reward_hearts": 25, "event_key": "image"},
 ]
 
 
