@@ -10,7 +10,7 @@ android {
         applicationId "top.lurvy.vesperine"
         minSdk 24
         targetSdk 36
-        versionCode 4
+        versionCode 5
         versionName "0.1.0"
 
         // 生产地址。注意：实际构建走 build_apk.sh / build_aab.sh，它们编译的是

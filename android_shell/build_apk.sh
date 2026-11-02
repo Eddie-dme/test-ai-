@@ -28,7 +28,7 @@ PLATFORM="$ANDROID_HOME/platforms/android-36/android.jar"
 APP="app/src/main"
 
 # 版本号（与 build_aab.sh 保持一致，改一处记得同步另一处）
-VERSION_CODE=4
+VERSION_CODE=5
 VERSION_NAME="0.1.0"
 OUT="out"
 # ⚠️ keystore 必须放在 out/ 之外：out/ 每次构建都会被 rm -rf，

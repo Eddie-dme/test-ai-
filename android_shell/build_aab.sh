@@ -36,7 +36,7 @@ APP="app/src/main"
 # 每次上架递增。Play 拒绝重复 versionCode，而它散落在 aapt2 的两次 link 调用里，
 # 手改极易漏掉一处（漏了会打出一个旧版本号的包，上传时才发现）。
 # 改这里一处即可；app/build.gradle 里还有一份声明，仅作文档参考，不走 Gradle。
-VERSION_CODE=4
+VERSION_CODE=5
 VERSION_NAME="0.1.0"
 # ──────────────────────────────────────────────────────────────
 
