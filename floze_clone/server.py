@@ -1125,6 +1125,26 @@ class API:
         u = self.s.ensure_user()
         return ok(self.s.list_quests(u["id"], qtype or "daily"))
 
+    # 每日签到的奖励额度。设计约束：必须**独立于任何消耗行为**，
+    # 因为 hearts 归零的用户做不了任何任务（发消息/动态/评论全要付费），
+    # 一旦没有零成本入口就是永久死锁 —— 签到是唯一的出口。
+    CHECKIN_HEARTS = 10
+
+    def daily_checkin(self) -> dict:
+        """每日签到。零成本，是零余额用户唯一的自救路径。"""
+        u = self.s.ensure_user()
+        day = time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
+        if self.s.has_checked_in(u["id"], day):
+            return err("ALREADY_CHECKED_IN")
+        balance = self.s.add_hearts(u["id"], self.CHECKIN_HEARTS, "checkin:" + day)
+        return ok({"hearts": self.CHECKIN_HEARTS, "balance": balance, "day": day})
+
+    def checkin_status(self) -> dict:
+        u = self.s.ensure_user()
+        day = time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
+        return ok({"checkedIn": self.s.has_checked_in(u["id"], day),
+                   "reward": self.CHECKIN_HEARTS, "day": day})
+
     def quest_claim(self, body: dict) -> dict:
         u = self.s.ensure_user()
         qid = int(body.get("questId", 0))
@@ -1344,7 +1364,8 @@ class Handler(BaseHTTPRequestHandler):
         user = store.create_user(
             email, auth.hash_password(password), nickname=nickname,
             persona_name=(body.get("personaName") or "").strip()[:40],
-            persona_desc=(body.get("personaDesc") or "").strip()[:500])
+            persona_desc=(body.get("personaDesc") or "").strip()[:500],
+            free_quota=FREE_QUOTA)
         token = store.create_token(user["id"], auth.TOKEN_TTL_SECONDS)
         return ok({"token": token, "user": self._public_user(user)})
 
@@ -1537,6 +1558,8 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/quest/dashboard":    return self._json(api.quest_dashboard())
             if p == "/api/quest/list":
                 return self._json(api.quest_list(qs.get("type", ["daily"])[0]))
+            if p == "/api/quest/checkin-status":
+                return self._json(api.checkin_status())
             if p == "/api/achievement":        return self._json(api.achievements())
             if p == "/api/notification/list":  return self._json(api.notifications())
             if p == "/api/notification/has-unread":
@@ -1644,6 +1667,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(api.album_mark_read())
             if p == "/api/quest/claim":
                 return self._json(api.quest_claim(self._body()))
+            if p == "/api/quest/checkin":
+                return self._json(api.daily_checkin())
             if p == "/api/notification/mark-read":
                 return self._json(api.notify_mark(self._body()))
             if p == "/api/notification/mark-roles-as-read":

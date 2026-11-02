@@ -1025,7 +1025,7 @@ async function openQuests() {
     + '<div style="font-size:12px;color:var(--gold)">💖 <b id="qpBal">–</b></div>'
     + '</div>'
     + '<div style="font-size:11.5px;color:var(--dim);margin-bottom:14px">'
-    + 'Tasks reset daily. Tap Claim once a task is complete.</div>'
+    + 'Dailies reset each day. Goals are one-time. Tap Claim when complete.</div>'
     + '<div id="qpBody"></div>'
     + '<button class="ghost" id="qpClose" style="width:100%;padding:10px;margin-top:14px">Close</button>'
     + '</div>';
@@ -1036,6 +1036,52 @@ async function openQuests() {
 
   const balEl = mask.querySelector('#qpBal');
   const body = mask.querySelector('#qpBody');
+
+  /* 每日签到 —— 放在最上面，因为它是 hearts 归零用户唯一的自救出口。
+     其余所有任务都要先花 hearts（发消息/动态/评论），余额为 0 时就无法推进，
+     没有签到就是永久死锁。 */
+  const renderCheckin = (checkedIn, reward) => {
+    let box = mask.querySelector('#qpCheckin');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'qpCheckin';
+      box.className = 'qp-row';
+      box.style.marginBottom = '14px';
+      body.parentNode.insertBefore(box, body);
+    }
+    box.innerHTML = '<div class="qp-main">'
+      + '<div class="qp-title">Daily check-in</div>'
+      + '<div class="qp-meta"><span>Free hearts, once a day</span>'
+      + '<span style="color:var(--gold)">+' + reward + ' 💖</span></div>'
+      + '</div>';
+    const b = document.createElement('button');
+    b.className = 'qp-btn' + (checkedIn ? '' : ' ready');
+    b.textContent = checkedIn ? 'Done' : 'Claim';
+    if (!checkedIn) {
+      b.onclick = async () => {
+        b.disabled = true; b.textContent = '…';
+        const cr = await api('/api/quest/checkin', { method: 'POST' });
+        if (cr.flag !== 0) {
+          appendToBody('签到：' + (cr.msg || '失败'));
+          b.disabled = false; b.textContent = 'Claim';
+          return;
+        }
+        if (cr.data && cr.data.balance !== undefined) {
+          $('#hearts').textContent = cr.data.balance;
+          balEl.textContent = cr.data.balance;
+        }
+        toast('+' + cr.data.hearts + ' 💖');
+        renderCheckin(true, reward);
+      };
+    }
+    box.appendChild(b);
+  };
+  const appendToBody = (msg) => {
+    const t = document.createElement('div');
+    t.style.cssText = 'font-size:11.5px;color:var(--rose);margin-top:8px';
+    t.textContent = msg;
+    body.appendChild(t);
+  };
 
   const draw = (data) => {
     const wallet = (data.stats && data.stats.hearts);
@@ -1110,6 +1156,11 @@ async function openQuests() {
     balEl.textContent = hb.data.heartInfo.amount;
   }
   draw(d);
+
+  // 签到状态单独拉（dashboard 不返回它）
+  const ck = await api('/api/quest/checkin-status');
+  renderCheckin(ck.flag === 0 ? !!ck.data.checkedIn : true,
+                ck.flag === 0 ? ck.data.reward : 10);
 }
 
 /* ---------- 广场（动态流）---------- */

@@ -480,15 +480,27 @@ class Store:
 
     def create_user(self, email: str, password_hash: str,
                     nickname: str = "Traveller", persona_name: str = "",
-                    persona_desc: str = "") -> dict:
-        """新建账号。其余配额表沿用懒初始化（INSERT OR IGNORE），无需在此建。"""
+                    persona_desc: str = "",
+                    free_quota: dict | None = None,
+                    starter_hearts: int = 30) -> dict:
+        """新建账号。
+
+        `free_quota` 必须传：免费额度行不会「懒初始化」—— 原注释这么写，
+        但代码里并不存在那段逻辑，结果是**注册用户一条免费额度都没有**，
+        发第一条动态就要付 3 hearts、第一条评论付 2，
+        而 bootstrap 只给 `ensure_user()` 那一个用户建了行。
+        """
         cur = self.c.execute(
             "INSERT INTO users (nickname, persona_name, persona_desc, hearts,"
             " email, password_hash, terms_accepted_at, created_at)"
             " VALUES (?,?,?,?,?,?,?,?)",
-            (nickname, persona_name, persona_desc, 30,
+            (nickname, persona_name, persona_desc, starter_hearts,
              email, password_hash, now(), now()))
         uid = cur.lastrowid
+        for t, lim in (free_quota or {}).items():
+            self.c.execute(
+                "INSERT OR IGNORE INTO free_quota (user_id, type, count, limit_)"
+                " VALUES (?,?,0,?)", (uid, t, lim))
         self.c.commit()
         return dict(self.c.execute(
             "SELECT * FROM users WHERE id=?", (uid,)).fetchone())
@@ -1308,8 +1320,24 @@ class Store:
         self.c.commit()
 
     # ---- quest / achievement ---------------------------------------
+    @staticmethod
+    def _quest_period(qtype: str) -> str:
+        """user_quests.day 的取值。
+
+        daily → 当天日期（每天重置）
+        goal  → 固定字符串（**永不重置**）
+
+        原先两者都用当天日期，导致「长期任务」每天凭空重置：
+        `goal_create_role` 是零成本动作、奖励 30 hearts，
+        于是用户可以每天白领 30 —— 等于一个永久免费 faucet，
+        也让人误以为 hearts 死锁已被解决（其实只是靠这个漏洞撑着）。
+        """
+        if qtype == "goal":
+            return "goal"          # 固定 key：一个账号一辈子只能领一次
+        return time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
+
     def list_quests(self, user_id: int, qtype: str = "daily") -> list[dict]:
-        today = time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
+        today = self._quest_period(qtype)
         rows = self.c.execute(
             "SELECT * FROM quests WHERE type=? ORDER BY id", (qtype,)).fetchall()
         out = []
@@ -1325,25 +1353,33 @@ class Store:
             out.append(d)
         return out
 
+    def has_checked_in(self, user_id: int, day: str) -> bool:
+        """今天是否已签到。用流水表判断，不额外建表。"""
+        row = self.c.execute(
+            "SELECT 1 FROM heart_ledger WHERE user_id=? AND reason=? LIMIT 1",
+            (user_id, "checkin:" + day)).fetchone()
+        return bool(row)
+
     def bump_quest(self, user_id: int, event_key: str) -> None:
         """行为发生后推进对应的日常/目标任务进度。"""
-        today = time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
         rows = self.c.execute(
-            "SELECT id FROM quests WHERE event_key=?", (event_key,)).fetchall()
+            "SELECT id, type FROM quests WHERE event_key=?", (event_key,)).fetchall()
         for r in rows:
+            # 每个任务按自己的 type 决定周期 key（goal 永不重置）
+            period = self._quest_period(r["type"])
             self.c.execute(
                 "INSERT INTO user_quests (user_id, quest_id, progress, claimed, day,"
                 " updated_at) VALUES (?,?,1,0,?,?)"
                 " ON CONFLICT(user_id, quest_id, day) DO UPDATE SET"
                 " progress=progress+1, updated_at=excluded.updated_at",
-                (user_id, r["id"], today, now()))
+                (user_id, r["id"], period, now()))
         self.c.commit()
 
     def claim_quest(self, user_id: int, quest_id: int) -> dict:
-        today = time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
         q = self.c.execute("SELECT * FROM quests WHERE id=?", (quest_id,)).fetchone()
         if not q:
             return {"ok": False, "reason": "not found"}
+        today = self._quest_period(q["type"])
         uq = self.c.execute(
             "SELECT * FROM user_quests WHERE user_id=? AND quest_id=? AND day=?",
             (user_id, quest_id, today)).fetchone()
