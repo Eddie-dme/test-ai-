@@ -54,7 +54,6 @@ Six reply styles, from quick one-liners to long, novel-style prose. You decide h
 
 FAIR AND OPEN
 - Free to start — no subscription required
-- Daily quests earn you free hearts
 - Hearts unlock longer replies, image generation, and premium scenes
 
 ABOUT
