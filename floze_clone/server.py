@@ -554,7 +554,8 @@ class API:
         {"id": "ip",         "label": "侵权"},
         {"id": "other",      "label": "其他"},
     ]
-    REPORT_TARGETS = {"role", "moment", "comment", "user", "album", "scenario"}
+    REPORT_TARGETS = {"role", "moment", "comment", "user", "album",
+                      "scenario", "message"}
 
     def report_reasons(self) -> dict:
         """举报原因选项（前端弹窗用）。"""
@@ -582,6 +583,12 @@ class API:
                 row = self.s.c.execute(
                     "SELECT title, description FROM scenarios WHERE id=?", (tid,)).fetchone()
                 return f"{row['title']}: {row['description']}" if row else ""
+            if ttype == "message":
+                # AI 回复的举报：Play 生成式 AI 政策要求应用内可举报不当输出。
+                # 快照必须留原文 —— 这条消息可能随后被处置或删除。
+                row = self.s.c.execute(
+                    "SELECT speaker, content FROM messages WHERE id=?", (tid,)).fetchone()
+                return f"[{row['speaker']}] {row['content']}" if row else ""
         except Exception:
             pass
         return ""
@@ -1716,17 +1723,34 @@ class Handler(BaseHTTPRequestHandler):
                            "label": affinity.describe(aff_new)}})
 
         acc = []
+        blocked = False
         try:
             for piece in llm.chat_stream(role, persona, memory, history, chatroom["chat_mode"]):
                 acc.append(piece)
+                # 出站审核 —— 必须在推送前检查。
+                # 只拦用户输入不够：Play 生成式 AI 政策要求对**模型输出**也做过滤，
+                # 否则模型被诱导产出的违规内容会直接推到用户屏幕上。
+                # 零滞后：每个 token 都先审后推，命中则中断且不落库。
+                if api._screen("".join(acc), field="assistant"):
+                    blocked = True
+                    break
                 emit({"event": "token", "text": piece})
         except Exception as ex:
             emit({"event": "error", "msg": str(ex)[:200]})
 
+        if blocked:
+            # 不落库：违规内容一旦进 messages 表，就从「过滤」变成了「持有」。
+            emit({"event": "error", "code": "CONTENT_BLOCKED",
+                  "msg": "该回复未通过内容安全检查，已中止。"})
+            emit({"event": "done", "length": 0, "blocked": True})
+            return
+
         full = "".join(acc)
+        mid = None
         if full:
-            store.add_message(cid, "assistant", full)
-        emit({"event": "done", "length": len(full)})
+            mid = store.add_message(cid, "assistant", full)
+        # messageId 回传前端：AI 回复必须可在应用内举报（同一政策要求）
+        emit({"event": "done", "length": len(full), "messageId": mid})
 
 
 def local_addresses(port: int) -> list[str]:

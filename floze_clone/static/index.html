@@ -102,6 +102,7 @@
         border:1px solid var(--line);border-radius:12px;padding:3px 10px;
         background:rgba(255,255,255,.02);transition:.2s}
   .msg .say:hover{color:var(--rose);border-color:var(--rose)}
+  .msg.blocked{border-color:var(--rose);color:var(--rose);opacity:.9}
   .msg .say.playing{color:var(--rose);border-color:var(--rose)}
   .msg .say.loading{color:var(--gold);border-color:var(--gold);cursor:wait}
   .msg .say .dot{width:6px;height:6px;border-radius:50%;background:currentColor;
@@ -786,9 +787,8 @@ async function loadMessages() {
     const el = appendMsg(m.speaker === 'user' ? 'user' : 'ai',
       m.content,
       m.heart_cost ? `−${m.heart_cost} 💖` : '');
-    el.dataset.id = m.id;
-    const btn = el.querySelector('.say');
-    if (btn) btn.onclick = (e) => { e.stopPropagation(); playSpeech(m.id, btn); };
+    if (m.speaker === 'user') el.dataset.id = m.id;
+    else attachAiActions(el, m.id);
   });
   box.scrollTop = box.scrollHeight;
 }
@@ -814,6 +814,22 @@ function appendMsg(kind, text, status) {
   return d;
 }
 
+/* AI 消息的动作：朗读 + 举报。
+   举报是 Play 生成式 AI 政策的硬性要求 —— 用户必须能在应用内举报不当 AI 输出，
+   只提供屏蔽或客服邮箱都不算。 */
+function attachAiActions(el, mid) {
+  if (!el || !mid) return;
+  el.dataset.id = mid;
+  const say = el.querySelector('.say:not(.rep)');
+  if (say) say.onclick = (e) => { e.stopPropagation(); playSpeech(mid, say); };
+  if (el.querySelector('.say.rep')) return;
+  const rep = document.createElement('span');
+  rep.className = 'say rep';
+  rep.textContent = '⚑ 举报';
+  rep.onclick = (e) => { e.stopPropagation(); openReport('message', mid); };
+  el.appendChild(rep);
+}
+
 /* ---------- 发送（SSE 流式） ---------- */
 async function send() {
   if (state.sending) return;
@@ -828,6 +844,8 @@ async function send() {
   const bubble = appendMsg('ai', '');
   bubble.innerHTML = '<span class="spinner"></span>';
   let acc = '';
+  let blocked = false;
+  let msgId = null;
 
   try {
     const resp = await fetch(API_BASE + '/api/message/send', {
@@ -867,24 +885,31 @@ async function send() {
           acc += evt.text; bubble.textContent = acc;
           $('#chat').scrollTop = $('#chat').scrollHeight;
         } else if (evt.event === 'error') {
-          toast('模型错误：' + evt.msg);
+          if (evt.code === 'CONTENT_BLOCKED') {
+            blocked = true;
+            bubble.textContent = evt.msg || '该回复未通过内容安全检查，已中止。';
+            bubble.classList.add('blocked');
+          } else {
+            toast('模型错误：' + evt.msg);
+          }
+        } else if (evt.event === 'done') {
+          if (evt.messageId) msgId = evt.messageId;
         }
       }
     }
   } catch (e) {
     toast('请求异常：' + e.message);
   }
-  if (!acc) bubble.textContent = '（无输出）';
+  if (!acc && !blocked) bubble.textContent = '（无输出）';
   state.sending = false; $('#send').disabled = false;
-  // 流式刚生成的这条消息需要拿 messageId 才能朗读
-  if (acc && state.chatroom) {
-    const lr = await api('/api/message/list?chatroomId=' + state.chatroom.id);
-    const last = (lr.data || []).filter(m => m.speaker === 'assistant').pop();
-    if (last) {
-      bubble.dataset.id = last.id;
-      const btn = bubble.querySelector('.say');
-      if (btn) btn.onclick = (e) => { e.stopPropagation(); playSpeech(last.id, btn); };
+  // 流式刚生成的这条消息需要拿 messageId 才能朗读 / 举报
+  if (acc && !blocked && state.chatroom) {
+    if (!msgId) {
+      const lr = await api('/api/message/list?chatroomId=' + state.chatroom.id);
+      const last = (lr.data || []).filter(m => m.speaker === 'assistant').pop();
+      if (last) msgId = last.id;
     }
+    if (msgId) attachAiActions(bubble, msgId);
   }
   refreshWallet();
 }

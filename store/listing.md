@@ -29,13 +29,13 @@ Vesperine — Romantasy AI Chat
 
 Step into a story that answers back.
 
-Vesperine is an AI roleplay app for people who want more than a chatbot. Every character has a name, a past, and a reason to keep talking to you. They remember what you told them last week. They notice when you go quiet. And if you stay long enough, they tell you things they have never told anyone.
+Vesperine is an AI roleplay app for people who want more than a chatbot. Every character has a name, a past, and a reason to keep talking to you. They remember what you told them last week. They react to how you treat them. And if you stay long enough, they tell you things they have never told anyone.
 
 MEET THE CAST
 A vampire duke who rules a court he despises. A fallen knight guarding a border she no longer believes in. A court sorcerer who is always three answers ahead of you. Each one is written with a personality, a backstory, and an opening scene — not a blank slate waiting for a prompt.
 
 THEY REMEMBER
-Conversations don't reset. Characters carry your history: your name, what you told them, how you treated them. Memories persist across sessions, and you can pin the ones that matter so they never fade.
+Conversations don't reset. Characters carry your history: your name, what you told them, how you treated them. Memories persist across sessions.
 
 THE STORY MOVES
 Affinity grows — or doesn't. Characters react to how you treat them. Push too hard and they close off. Earn their trust and hidden chapters unlock: side stories that open for you alone.
@@ -54,7 +54,7 @@ Six reply styles, from quick one-liners to long, novel-style prose. You decide h
 
 FAIR AND OPEN
 - Free to start — no subscription required
-- Hearts unlock longer replies, image generation, and premium scenes
+- Hearts unlock longer replies and image generation
 
 ABOUT
 Vesperine is fiction, and it stays fiction. Every character is original and none of them are real people. Your conversations are yours.
