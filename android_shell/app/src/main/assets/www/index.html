@@ -1158,9 +1158,14 @@ async function openQuests() {
   draw(d);
 
   // 签到状态单独拉（dashboard 不返回它）
+  // 拉不到签到状态就**不渲染这一行**。
+  // 早先的写法是「拉不到就当已签到」，结果服务端还没部署这条路由时，
+  // 界面会显示一个不可点的 Done —— 骗用户说今天已经签过了，
+  // 而实际上他一次都没领到。宁可整行不显示，也不能显示假状态。
   const ck = await api('/api/quest/checkin-status');
-  renderCheckin(ck.flag === 0 ? !!ck.data.checkedIn : true,
-                ck.flag === 0 ? ck.data.reward : 10);
+  if (ck.flag === 0 && ck.data) {
+    renderCheckin(!!ck.data.checkedIn, ck.data.reward);
+  }
 }
 
 /* ---------- 广场（动态流）---------- */
