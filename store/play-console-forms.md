@@ -169,9 +169,18 @@ https://eddie-dme.github.io/test-ai-/terms.html     HTTP 200
   - 屏蔽：`creator_blocks` 表 + `/api/creator/block/update`，
     前端角色页有「🚫 屏蔽」按钮
 
-**仍需你判断的一项**
+**内容分级口径 —— ✅ 2026-11-05 已定：Teen / 13+**
 
-- **内容分级口径**：本文件第 2 节按实际内容分析给出 **Teen / 13+**，
-  但 HANDOFF 里另有一句「对标 FlOZE 属 Mature 17+」。两者不一致。
-  以实际内容为准填 Teen 是可辩护的；但如果产品定位偏成人向，
-  **如实填高比填低安全** —— 低报被抽查到会被下架。
+此前政策文件写「under 17」而分级问卷按 Teen/13+，两处矛盾。已统一到 13+：
+
+- `docs/privacy.html` §6 Children：`under 17` → `under 13`，并补 COPPA 与
+  13–17 岁需监护人陪同的口径
+- `docs/terms.html` §2 Eligibility：`17 years old` → `13 years old`
+- 分级问卷：**Teen / 13+**，目标受众 **13 岁及以上**
+
+依据：实际内容是言情小说尺度（有暗示但无露骨描写），Teen 可辩护；
+17+ 会把受众砍掉大半，而内容并没有支撑那个级别。
+
+**改回去的条件**：若日后加入露骨性描写或更强暴力描写，必须同步提到
+Mature 17+，并改回政策里的年龄线 —— 政策与分级表必须始终一致，
+审核员会对着看。
