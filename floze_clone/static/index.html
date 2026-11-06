@@ -546,9 +546,14 @@ let state = { roles: [], rooms: [], modes: [], chatroom: null, role: null,
  *   2. 没有可截断的文本字段（例如一张超大的 base64）
  *      → 不予发送，直接回一个本地错误，避免把注定失败的请求扔出去。
  *
- * 上限与服务端 MAX_BODY_BYTES 默认值对齐（1 MiB）。
+ * 上限与服务端 MAX_BODY_BYTES 默认值对齐（1 MiB），但**留 4 KiB 余量**：
+ * 线上 nginx 用的就是默认的 client_max_body_size 1m（1,048,576
+ * 字节），和应用层硬上限完全相等。若前端贴着 1,048,576 去截，
+ * 任何一点点偏差（如某个代理把 body 重编码）就会变成一次 nginx 413，
+ * 而 nginx 只会返回一段 HTML 错误页，用户看不出发生了什么。
+ * 用 1,044,480 留出余量，两头都过得去。
  */
-const MAX_BODY_BYTES = 1048576;
+const MAX_BODY_BYTES = 1048576 - 4096;
 const TRUNCATABLE_KEYS = ['text', 'prompt', 'content', 'description'];
 
 function utf8Len(s) {
