@@ -1,0 +1,42 @@
+# Vesperine —— 日志轮转
+#
+# 问题：systemd 单元用的是 StandardOutput=append:/var/log/vesperine.log，
+# 这个文件只增不减，已经 3.8MB 且会持续增长。
+#
+# 关键点：必须用 copytruncate。
+# 服务进程一直持有这个文件的句柄，如果 logrotate 用默认的 rename 方式，
+# 进程会继续往改名后的旧 inode 写，磁盘空间永远不释放 ——
+# 表现出来就是「日志轮转了，但磁盘没变」。
+# copytruncate 先复制再原地清空，句柄不变，服务无感知。
+#
+# create 的属主必须和 systemd 单元里的一致（User=vesperine），
+# 否则轮转后服务没有写权限，日志会直接丢失且不报错。
+
+/var/log/vesperine.log {
+    # 不要用 su vesperine —— logrotate 切到该用户后就没有权限在
+    # /var/log（root:root 755）里创建 vesperine.log.1，
+    # 结果是「日志需要轮转」但什么都没发生，且不报错。
+    # 以 root 运行，靠下面的 create 把新文件交还给服务用户。
+    daily
+    rotate 14
+    maxsize 20M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    create 0640 vesperine vesperine
+}
+
+/var/log/vesperine-backup.log {
+    su root root
+    weekly
+    rotate 8
+    maxsize 5M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    create 0640 root root
+}
