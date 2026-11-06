@@ -45,6 +45,23 @@ for f in "$JAVA_HOME/bin/javac" "$BUILD_TOOLS/aapt2" "$BUILD_TOOLS/d8" "$BUILD_T
 done
 echo "✅ JDK / aapt2 / d8 / apksigner / zipalign / android.jar 就绪"
 
+# ── 前端同步 ───────────────────────────────────────────────────────
+# App 内嵌一份 index.html（assets/www），与 floze_clone/static/ 的那份是
+# 同一份文件的两个副本。构建脚本不会自己去拉，忘了 cp 就会打出一个
+# 「服务端已修、App 里还是旧版」的包 —— 这种包照样能签名能安装，
+# 从构建输出上完全看不出来，只有装到真机上才发现丢了一个功能。
+# 所以在编译资源之前强制对齐，不一致就直接覆盖，再核对一遍。
+SRC_HTML="$PWD/../floze_clone/static/index.html"
+WWW_HTML="$APP/assets/www/index.html"
+[ -f "$SRC_HTML" ] || { echo "❌ 找不到前端源: $SRC_HTML"; exit 1; }
+if ! cmp -s "$SRC_HTML" "$WWW_HTML"; then
+  mkdir -p "$(dirname "$WWW_HTML")"
+  cp "$SRC_HTML" "$WWW_HTML"
+  echo "ℹ️  前端已同步 → assets/www/index.html ($(wc -c < "$SRC_HTML" | tr -d ' ') 字节)"
+fi
+cmp -s "$SRC_HTML" "$WWW_HTML" || { echo "❌ 前端同步后仍不一致: $WWW_HTML"; exit 1; }
+echo "✅ 内嵌前端与 floze_clone/static/index.html 一致"
+
 rm -rf "$OUT"; mkdir -p "$OUT"/{compiled,gen,classes,dex}
 
 echo
