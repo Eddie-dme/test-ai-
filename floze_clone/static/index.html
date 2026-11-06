@@ -1218,6 +1218,9 @@ async function renderFeed() {
         <span data-a="cmt">💬 ${m.comment_count}</span>
         <span data-a="save" class="${m.saved ? 'on' : ''}">${m.saved ? '★ 已收藏' : '☆ 收藏'}</span>
         <span data-a="report" style="margin-left:auto;opacity:.55;font-size:11.5px">⚑ 举报</span>
+        ${(state.user && m.user_id === state.user.id)
+          ? '<span data-a="del" style="opacity:.55;font-size:11.5px;color:var(--rose)">✕ 删除</span>'
+          : ''}
       </div>
       <div class="cmt" style="display:none"></div>`;
 
@@ -1237,6 +1240,21 @@ async function renderFeed() {
       renderFeed();
     };
     c.querySelector('[data-a=report]').onclick = () => openReport('moment', m.id);
+    // 删除自己的动态。后端 delete_moment 会校验归属，
+    // 这里只是不给别人的动态显示入口 —— 真正的防线在服务端。
+    const delBtn = c.querySelector('[data-a=del]');
+    if (delBtn) {
+      delBtn.onclick = async () => {
+        if (!await confirmDelete('删除这条动态？评论和点赞记录会一起消失，无法恢复。')) return;
+        const rr = await api('/api/moment/delete', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ momentId: m.id })
+        });
+        if (rr.flag !== 0) return toast(rr.msg || '删除失败');
+        toast('已删除');
+        renderFeed();
+      };
+    }
     c.querySelector('[data-a=cmt]').onclick = async () => {
       const box2 = c.querySelector('.cmt');
       if (box2.style.display === 'block') { box2.style.display = 'none'; return; }
@@ -1381,6 +1399,26 @@ async function renderScenarios() {
       };
       const crel = c.querySelector('[data-creator]');
       if (crel) crel.onclick = () => openCreator(parseInt(crel.dataset.creator, 10));
+
+      // 自己创建的情景才显示删除。服务端 delete_scenario 会再校验一次归属。
+      if (state.user && s.creator_id === state.user.id) {
+        const del = document.createElement('span');
+        del.textContent = '✕ 删除';
+        del.style.cssText = 'margin-left:10px;opacity:.6;font-size:11.5px;color:var(--rose);cursor:pointer';
+        const acts = c.querySelector('[data-a=start]');
+        if (acts && acts.parentNode) acts.parentNode.appendChild(del);
+        del.onclick = async (ev) => {
+          ev.stopPropagation();
+          if (!await confirmDelete('删除这个情景？已经用它开的会话不受影响。')) return;
+          const rr = await api('/api/scenario/delete', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ scenarioId: s.id })
+          });
+          if (rr.flag !== 0) return toast(rr.msg || '删除失败');
+          toast('已删除');
+          load();
+        };
+      }
       c.querySelector('[data-a=start]').onclick = async () => {
         if (!state.roles.length) return toast('先加载角色库');
         const rid = state.role ? state.role.id : state.roles[0].id;
@@ -1484,6 +1522,36 @@ async function renderAlbum() {
   }
   box.appendChild(grid);
   api('/api/album/mark-read', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+}
+
+/* ---------- 确认弹窗 ----------
+   WebView 默认不渲染原生 confirm() —— 调用会静默返回 false，
+   在 App 里表现为「点了删除没反应」。所有破坏性操作都必须走这个自建弹窗。
+   返回 Promise<boolean>，可以 await。 */
+function confirmDelete(message, confirmLabel) {
+  return new Promise((resolve) => {
+    const mask = document.createElement('div');
+    mask.style.cssText =
+      'position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:320;'
+      + 'display:flex;align-items:center;justify-content:center;padding:24px';
+    mask.innerHTML =
+      '<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;'
+      + 'padding:22px;width:100%;max-width:330px">'
+      + '<div style="font-size:14.5px;line-height:1.7;margin-bottom:18px">'
+      + esc(message) + '</div>'
+      + '<div style="display:flex;gap:9px">'
+      + '<button class="ghost" id="cdNo" style="flex:1;padding:10px">取消</button>'
+      + '<button class="act" id="cdYes" style="flex:1;height:auto;padding:10px;'
+      + 'background:var(--rose);border-color:var(--rose);color:#fff">'
+      + esc(confirmLabel || '删除') + '</button>'
+      + '</div></div>';
+    document.body.appendChild(mask);
+
+    const done = (v) => { mask.remove(); resolve(v); };
+    mask.querySelector('#cdNo').onclick = () => done(false);
+    mask.querySelector('#cdYes').onclick = () => done(true);
+    mask.onclick = (e) => { if (e.target === mask) done(false); };
+  });
 }
 
 /* ---------- 图片查看器（全屏预览 + 保存）----------
@@ -1645,7 +1713,7 @@ async function openCreator(creatorId) {
     openCreator(creatorId);
   };
   card.querySelector('#crBlock').onclick = async () => {
-    if (!confirm('屏蔽后会自动解除关注，确定？')) return;
+    if (!await confirmDelete('屏蔽后会自动解除关注，确定？', '屏蔽')) return;
     await api('/api/creator/block/update', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ creatorId, blocked: true })});
