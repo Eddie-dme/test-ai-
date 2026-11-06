@@ -93,6 +93,127 @@ def _post(payload: dict, timeout: int = 200) -> dict:
         raise RuntimeError(f"HTTP {e.code}: {e.read().decode(errors='replace')[:300]}")
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Provider 适配层
+# ══════════════════════════════════════════════════════════════════════
+#
+# 为什么加这层而不是直接改 generate()
+# ────────────────────────────────────────
+# 上层（album_generate / ugc_generate）只依赖 generate() 的签名和返回结构。
+# 把 provider 分发放到 generate() 内部，切换时改一个环境变量即可，
+# 上层一行不用动。两个 provider 也可以同时配置，出问题随时切回。
+#
+#   IMAGE_PROVIDER=minimax   默认，现有行为，零变化
+#   IMAGE_PROVIDER=novita    走 Novita 的 OpenAI 兼容端点
+#
+# 两个 provider 的能力差异（2026-11-06 实测）
+# ────────────────────────────────────────────
+#
+#   MiniMax image-01              Novita ming-image-0.1
+#   ─────────────────────────     ─────────────────────────
+#   支持 subject_reference        不支持参考图（input_image_count 恒为 0）
+#   → 角色一致性 / 照片转头像      → 只能纯文生图
+#   $0.0035/张                    $0.0041/张（4096 tokens × $1/1M）
+#   6–23 秒                       12–21 秒
+#
+# ⚠️ 两个重要结论：
+#   1. Novita 的可调用图像模型里，只有 ming-image 系列能用；
+#      flux-1-schnell 端点持续 failed to schedule worker，
+#      sd_xl 系列端点不存在。
+#   2. Novita 单价反而比 MiniMax 高 17%，不是省钱选项。
+#
+# 因此：需要参考图时**强制走 MiniMax**（novita 做不到），
+# 纯文生图才允许按 IMAGE_PROVIDER 分发。
+
+IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "minimax").strip().lower()
+
+NOVITA_API = os.environ.get("NOVITA_BASE_URL", "https://api.novita.ai").rstrip("/")
+NOVITA_IMAGE_MODEL = os.environ.get("NOVITA_IMAGE_MODEL", "ming-image-0.1-design")
+
+
+def novita_key() -> str:
+    return os.environ.get("NOVITA_API_KEY", "").strip()
+
+
+def _novita_size(aspect_ratio: str) -> str:
+    """把 MiniMax 的 aspect_ratio 转成 Novita 的 WxH。
+
+    只支持它认的几档，其余回落 1024x1024。
+    """
+    table = {
+        "1:1": "1024x1024",
+        "16:9": "1280x720",
+        "9:16": "720x1280",
+        "4:3": "1024x768",
+        "3:4": "768x1024",
+        "3:2": "1024x682",
+        "2:3": "682x1024",
+    }
+    return table.get((aspect_ratio or "1:1").strip(), "1024x1024")
+
+
+def _generate_novita(prompt: str, aspect_ratio: str, n: int, negative: str) -> dict:
+    """Novita 适配：走 OpenAI 兼容的 /openai/v1/images/generations。
+
+    与 MiniMax 的差异处理：
+      - 返回是 b64_json（MiniMax 是 image_base64）
+      - 没有 negative_prompt 字段 → 拼到 prompt 末尾用 "avoid: ..." 表达
+      - 不支持参考图 → 由调用方提前拦住（generate 里判断）
+    """
+    key = novita_key()
+    if not key:
+        raise RuntimeError("未配置 NOVITA_API_KEY")
+
+    # Novita 不吃 negative_prompt，把要避开的东西并进正向描述。
+    # 这不是等效替代（正向描述对负面约束力更弱），但比丢掉好。
+    full = prompt
+    if negative:
+        full = prompt + ". Avoid: " + negative
+
+    payload = {
+        "model": NOVITA_IMAGE_MODEL,
+        "prompt": full,
+        "n": max(1, min(4, n)),
+        "size": _novita_size(aspect_ratio),
+        "response_format": "b64_json",
+    }
+
+    req = urllib.request.Request(
+        NOVITA_API + "/openai/v1/images/generations",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + key,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            d = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:300]
+        raise RuntimeError(f"Novita HTTP {e.code}: {body}")
+    except Exception as e:
+        raise RuntimeError(f"Novita 请求失败: {e}")
+
+    items = d.get("data") or []
+    imgs = []
+    for it in items:
+        b64 = it.get("b64_json") or ""
+        if b64:
+            imgs.append(base64.b64decode(b64))
+    if not imgs:
+        raise RuntimeError("Novita 未返回图片: " + json.dumps(d, ensure_ascii=False)[:200])
+
+    return {
+        "images": imgs,
+        "count": len(imgs),
+        "prompt": full,
+        "metadata": {"provider": "novita", "model": NOVITA_IMAGE_MODEL,
+                     "size": payload["size"], "usage": d.get("usage", {})},
+    }
+
+
 def generate(prompt: str, *, style: str = "", subject_image: bytes | None = None,
              aspect_ratio: str = "1:1", n: int = 1) -> dict:
     """
@@ -111,6 +232,13 @@ def generate(prompt: str, *, style: str = "", subject_image: bytes | None = None
     # 反向提示词：压制常见瑕疵（实测出现过的：多余符号、手部畸形）
     negative = ("extra symbols, watermark, text, signature, logo, forehead mark, "
                 "deformed hands, extra limbs, lowres, blurry, jpeg artifacts")
+
+    # ── provider 分发 ──
+    # 需要参考图时强制走 MiniMax：Novita 的 ming-image 实测
+    # input_image_count 恒为 0，传了也当没传 —— 用它做 Photo-to-Avatar
+    # 会静默失去「同一个人」的能力，比报错更危险。
+    if IMAGE_PROVIDER == "novita" and not subject_image:
+        return _generate_novita(full_prompt, aspect_ratio, n, negative)
 
     payload: dict = {
         "model": MODEL,
