@@ -245,6 +245,25 @@
     .toast{bottom:calc(96px + env(safe-area-inset-bottom))}
     .form,.gen,.card,.ch,.grid,.detail,.affbar{max-width:none}
   }
+
+  /* ---- 平板竖屏（641–820px）----
+     这个区间继续走上面的单栏 + 抽屉布局：768px 再塞 260px 侧栏，
+     主区只剩 508px，双栏反而比单栏更挤。
+     但元素不能像手机上那样拉满整宽 —— 手机上 390px 拉满是对的，
+     768px 上同一张卡片会变成「一句话占 720px，右边全是空」的。
+     限宽居中后，卡片比例回到接近手机的观感，也顺带避免
+     聊天消息在平板上拉成大段长行（阅读时眼睛要横扫整屏）。 */
+  @media (min-width:641px) and (max-width:820px){
+    .mainlist > *, .chat > .empty, .chat > .item{max-width:620px;margin-inline:auto}
+    .msg{max-width:min(78%, 560px)}
+  }
+
+  /* ---- 大屏（>1100px）——
+     双栏下主区会很宽，消息气泡若按百分比会拉到 1000px 以上。
+     给一个绝对上限，保持单行长度在可读范围内。 */
+  @media (min-width:1100px){
+    .msg{max-width:min(78%, 720px)}
+  }
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
         gap:10px;max-width:760px;width:100%}
   .grid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;
