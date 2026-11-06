@@ -52,6 +52,18 @@ ACCESS_KEY = os.environ.get("ACCESS_KEY", "").strip()
 # 限流挡住的是资源）。设为 0 可关闭。
 RATE_LIMIT_PER_MIN = int(os.environ.get("RATE_LIMIT_PER_MIN", "120"))
 
+# 请求体上限 —— 单个 POST body 的字节数上限，超过直接 413 拒绝。
+#
+# 为什么需要：服务挂在一层会缓冲请求体的反向代理后面，超限时网关
+# 在第一跳就回 413，客户端看到的是「Failed to buffer the request body」，
+# 既分不清是自己发太大还是服务出错，也白白占了连接和带宽。
+# 在应用层先挡一道，客户端能拿到明确的 error msg，服务也不会
+# 为一个注定失败的请求把 body 读进内存。
+#
+# 1 MiB 的依据：最大的合法请求是长消息（message/send 的 text），
+# 正常几条 KB；图片上传不走 POST，而是客户端本地保存。
+MAX_BODY_BYTES = int(os.environ.get("MAX_BODY_BYTES", str(1024 * 1024)))
+
 _rate_hits: dict = {}
 _rate_lock = threading.Lock()
 
@@ -1375,6 +1387,18 @@ class API:
         return chatroom, cost, 0, None
 
 
+class _PayloadTooLarge(Exception):
+    """请求体超过 MAX_BODY_BYTES。
+
+    用异常而不是返回空 dict，是因为空 dict 会被业务层当成「没传参数」
+    继续往下走，最终变成一个语义模糊的 400；而这里需要的是明确的 413。
+    """
+
+    def __init__(self, size: int):
+        self.size = size
+        super().__init__(f"payload {size} bytes exceeds limit")
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         """访问日志 —— 记录真实来源 IP 与请求行。
@@ -1572,8 +1596,15 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         if not n:
             return {}
+        if MAX_BODY_BYTES > 0 and n > MAX_BODY_BYTES:
+            # 兜底：do_POST 入口已经挡过一次，这里是防其它调用路径绕过。
+            # 不读 body —— 读进来正是要避免的事。
+            self.close_connection = True
+            raise _PayloadTooLarge(n)
         try:
             return json.loads(self.rfile.read(n).decode())
+        except _PayloadTooLarge:
+            raise
         except Exception:
             return {}
 
@@ -1712,6 +1743,16 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- POST
     def do_POST(self):
         p = urllib.parse.urlparse(self.path).path
+        # 体积闸门 —— 放在限流和鉴权之前：读一个 header 就完成判断，
+        # 比拒绝一个已经读完 5MB 再解析的请求便宜得多。
+        #
+        # 声明长度超限时：直接回 413 且不读 body，然后关连接。
+        # 关连接是必须的 —— 否则残留的 body 会被当成下一个请求解析。
+        _cl = int(self.headers.get("Content-Length") or 0)
+        if MAX_BODY_BYTES > 0 and _cl > MAX_BODY_BYTES:
+            self.close_connection = True
+            return self._json(
+                err(f"PAYLOAD_TOO_LARGE: {_cl} bytes exceeds {MAX_BODY_BYTES}", 413), 413)
         if p.startswith("/api/"):
             if not rate_allow(self.client_address[0]):
                 return self._json({"flag": 1, "msg": "RATE_LIMITED"}, 429)
@@ -1829,6 +1870,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(api.moment_comment_create(self._body()))
             if p == "/api/message/send":
                 return self._stream_send(api)
+        except _PayloadTooLarge as e:
+            self.close_connection = True
+            return self._json(
+                err(f"PAYLOAD_TOO_LARGE: {e.size} bytes exceeds {MAX_BODY_BYTES}", 413), 413)
         except Exception as e:
             return self._json(err(f"server error: {e}", 500), 500)
         self._json(err("not found", 404), 404)
