@@ -394,6 +394,22 @@ CREATE TABLE IF NOT EXISTS reports (
     UNIQUE(reporter_id, target_type, target_id)
 );
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, priority, created_at);
+
+-- 官网线索（lurvy.top 联系表单）
+-- 独立于用户体系：填表的人不是 App 用户，不需要账号。
+CREATE TABLE IF NOT EXISTS leads (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    company         TEXT NOT NULL DEFAULT '',
+    contact         TEXT NOT NULL,
+    need            TEXT NOT NULL DEFAULT '',
+    source          TEXT NOT NULL DEFAULT 'website',  -- website | api
+    ip              TEXT NOT NULL DEFAULT '',
+    ua              TEXT NOT NULL DEFAULT '',
+    mail_status     TEXT NOT NULL DEFAULT 'pending',  -- pending | sent | failed | skipped
+    created_at      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_leads_created ON leads(created_at DESC);
 """
 
 
@@ -838,6 +854,38 @@ class Store:
             print(f"  ⚠️  IAP 留痕失败: {e}")
 
     # ---- 举报 ----------------------------------------------------
+
+    # ---- 官网线索（leads）-------------------------------------------
+    def create_lead(self, name: str, company: str, contact: str, need: str,
+                    source: str = "website", ip: str = "", ua: str = "") -> int:
+        """记录一条官网咨询。返回 id。
+
+        独立于用户体系 —— 填表的人不是 App 用户。
+        先落库再发邮件：邮件失败也不能丢线索。
+        """
+        cur = self.c.execute(
+            "INSERT INTO leads (name, company, contact, need, source, ip, ua,"
+            " created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (name[:100], company[:120], contact[:160], need[:4000],
+             source[:20], ip[:64], ua[:300], now()))
+        self.c.commit()
+        return cur.lastrowid
+
+    def mark_lead_mail(self, lead_id: int, status: str) -> None:
+        self.c.execute("UPDATE leads SET mail_status=? WHERE id=?", (status, lead_id))
+        self.c.commit()
+
+    def list_leads(self, limit: int = 50) -> list[dict]:
+        rows = self.c.execute(
+            "SELECT * FROM leads ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_leads_since(self, ts: float, ip: str) -> int:
+        """同一 IP 在时间窗内的提交数 —— 用于简单防刷。"""
+        r = self.c.execute(
+            "SELECT COUNT(*) c FROM leads WHERE ip=? AND created_at>?",
+            (ip, ts)).fetchone()
+        return r["c"] if r else 0
 
     def create_report(self, reporter_id: int, target_type: str, target_id: int,
                       reason: str, detail: str = "", snapshot: str = "") -> dict:

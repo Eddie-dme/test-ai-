@@ -30,6 +30,7 @@ import llm
 import affinity
 import moderation
 import iap_verify
+import mailer
 import imagegen
 import tts
 import voices as voice_map
@@ -598,6 +599,86 @@ class API:
         except Exception:
             pass
         return ""
+
+    # ---- 官网线索 ---------------------------------------------------
+    # 简单的提交频率限制：同一 IP 10 分钟内最多 3 条。
+    # 不引入额外依赖，用内存字典即可 —— 重启丢失反而正合适（本来就只是防误触/脚本）。
+    _LEAD_WINDOW = 600
+    _LEAD_MAX_PER_WINDOW = 3
+    _lead_hits: dict = {}
+
+    def _client_ip(self) -> str:
+        """取真实来源 IP。经 Cloudflare / nginx 时以 X-Forwarded-For 首段为准。"""
+        try:
+            fwd = self.headers.get("X-Forwarded-For", "") if self.headers else ""
+            if fwd:
+                return fwd.split(",")[0].strip()[:64]
+            if self.headers:
+                cf = self.headers.get("CF-Connecting-IP", "")
+                if cf:
+                    return cf.strip()[:64]
+            return (self.client_address[0] if self.client_address else "")[:64]
+        except Exception:
+            return ""
+
+    def _user_agent(self) -> str:
+        try:
+            return (self.headers.get("User-Agent", "") if self.headers else "")[:300]
+        except Exception:
+            return ""
+
+    def lead_create(self, body: dict) -> dict:
+        """接收官网联系表单。
+
+        不需要登录 —— 填表的人不是 App 用户。
+        先落库再发邮件：邮件失败也不能丢线索。
+        """
+        name = (body.get("name") or "").strip()
+        company = (body.get("company") or "").strip()
+        contact = (body.get("contact") or "").strip()
+        need = (body.get("need") or "").strip()
+
+        # 字段校验
+        if not name:
+            return err("MISSING_NAME")
+        if not contact:
+            return err("MISSING_CONTACT")
+        if len(name) > 100 or len(company) > 120 or len(contact) > 160 or len(need) > 4000:
+            return err("TOO_LONG")
+
+        # 极简防刷：同一 IP 时间窗内提交次数
+        ip = self._client_ip()
+        now_ts = time.time()
+        hits = [t for t in API._lead_hits.get(ip, []) if now_ts - t < API._LEAD_WINDOW]
+        if len(hits) >= API._LEAD_MAX_PER_WINDOW:
+            return err("RATE_LIMITED")
+        hits.append(now_ts)
+        API._lead_hits[ip] = hits
+        # 顺手清理过期条目，避免字典无限增长
+        if len(API._lead_hits) > 500:
+            API._lead_hits = {k: v for k, v in API._lead_hits.items()
+                              if any(now_ts - t < API._LEAD_WINDOW for t in v)}
+
+        lead_id = self.s.create_lead(
+            name, company, contact, need, source="website",
+            ip=ip, ua=(self._user_agent() or "")[:300])
+
+        # 发邮件通知（未配置 SMTP 时返回 skipped，不算失败）
+        status = mailer.send_lead({
+            "id": lead_id, "name": name, "company": company,
+            "contact": contact, "need": need, "ip": ip,
+        })
+        try:
+            self.s.mark_lead_mail(lead_id, status)
+        except Exception:
+            pass
+
+        print(f"  📩 新线索 #{lead_id} {name} / {company or '-'} / {contact} (mail={status})")
+        return ok({"id": lead_id, "mail": status})
+
+    def lead_list(self) -> dict:
+        """线索列表。生产环境必须加管理员鉴权 —— 与 report_queue 同级别风险。"""
+        return ok({"items": self.s.list_leads(50)})
 
     def report_create(self, body: dict) -> dict:
         u = self.s.ensure_user()
@@ -1580,6 +1661,7 @@ class Handler(BaseHTTPRequestHandler):
             # 举报：查询类走 GET，提交与处置走 POST
             if p == "/api/report/reasons":     return self._json(api.report_reasons())
             if p == "/api/report/queue":       return self._json(api.report_queue())
+            if p == "/api/contact/list":       return self._json(api.lead_list())
         except Exception as e:
             return self._json(err(f"server error: {e}", 500), 500)
         if p.startswith("/generated/") or p.startswith("/speech/"):
@@ -1592,10 +1674,17 @@ class Handler(BaseHTTPRequestHandler):
         if p.startswith("/api/"):
             if not rate_allow(self.client_address[0]):
                 return self._json({"flag": 1, "msg": "RATE_LIMITED"}, 429)
-            if not self._authorized():
+            # /api/contact 免 ACCESS_KEY：官网是公开页面，把密钥写进前端 JS
+            # 等于公开密钥。这个端点靠 IP 限流 + 字段校验防滥用，
+            # 且只能写入 leads 表，读不到任何用户数据。
+            if p != "/api/contact" and not self._authorized():
                 return self._json({"flag": 1, "msg": "UNAUTHORIZED"}, 401)
         api = self._api()
-        if p.startswith("/api/") and not p.startswith("/api/auth/") and not api.s.user_id:
+        # 官网联系表单必须免登录 —— 填表的人不是 App 用户，没有账号。
+        # 仅有 /api/contact 这一个例外，其余 /api/ 一律要求登录。
+        _PUBLIC_POST = {"/api/contact"}
+        if (p.startswith("/api/") and not p.startswith("/api/auth/")
+                and p not in _PUBLIC_POST and not api.s.user_id):
             return self._json(err("UNAUTHORIZED"), 401)
         try:
             if p == "/api/auth/register":
@@ -1651,6 +1740,8 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/creator/block/update":
                 b = self._body()          # 注意：只能读一次，rfile 读完就空
                 return self._json(api.block_action(b, b.get("blocked", True)))
+            if p == "/api/contact":
+                return self._json(api.lead_create(self._body()))
             if p == "/api/report/create":
                 return self._json(api.report_create(self._body()))
             if p == "/api/report/resolve":
