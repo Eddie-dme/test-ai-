@@ -424,6 +424,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     必须显式 ALTER。每次启动跑一遍，幂等。
     """
     cols = {r[1] for r in conn.execute("PRAGMA table_info(users)")}
+    if not cols:
+        # 空库：users 表还不存在。SCHEMA 里的 CREATE TABLE 会直接建成
+        # 含全部字段的完整表，不需要补列。
+        # 不早退的话，下面第一句 ALTER 就会失败（no such table），
+        # 而这次失败发生在建表之前 —— 结果是新机器 / 删库后无法启动。
+        return
     for col, ddl in (("email", "TEXT"), ("password_hash", "TEXT"),
                      ("terms_accepted_at", "REAL DEFAULT 0")):
         if col not in cols:
