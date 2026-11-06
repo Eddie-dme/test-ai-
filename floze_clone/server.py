@@ -236,8 +236,13 @@ def bootstrap(store: Store) -> None:
 class API:
     """业务层：把 HTTP 请求映射到 Store + LLM。"""
 
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, client_ip: str = "", user_agent: str = ""):
         self.s = store
+        # 请求上下文放在这里而不是 API 里直接读 headers ——
+        # API 是业务层，拿不到 HTTP handler 的 self.headers。
+        # 之前把 _client_ip 写在 API 里读 self.headers，结果 IP 一直是空。
+        self.client_ip = client_ip
+        self.user_agent = user_agent
 
     # ---- user / persona
     def user_settings(self) -> dict:
@@ -611,26 +616,6 @@ class API:
     _LEAD_MAX_PER_WINDOW = 10
     _lead_hits: dict = {}
 
-    def _client_ip(self) -> str:
-        """取真实来源 IP。经 Cloudflare / nginx 时以 X-Forwarded-For 首段为准。"""
-        try:
-            fwd = self.headers.get("X-Forwarded-For", "") if self.headers else ""
-            if fwd:
-                return fwd.split(",")[0].strip()[:64]
-            if self.headers:
-                cf = self.headers.get("CF-Connecting-IP", "")
-                if cf:
-                    return cf.strip()[:64]
-            return (self.client_address[0] if self.client_address else "")[:64]
-        except Exception:
-            return ""
-
-    def _user_agent(self) -> str:
-        try:
-            return (self.headers.get("User-Agent", "") if self.headers else "")[:300]
-        except Exception:
-            return ""
-
     def lead_create(self, body: dict) -> dict:
         """接收官网联系表单。
 
@@ -651,7 +636,7 @@ class API:
             return err("TOO_LONG")
 
         # 极简防刷：同一 IP 时间窗内提交次数
-        ip = self._client_ip()
+        ip = self.client_ip
         now_ts = time.time()
         hits = [t for t in API._lead_hits.get(ip, []) if now_ts - t < API._LEAD_WINDOW]
         if len(hits) >= API._LEAD_MAX_PER_WINDOW:
@@ -665,7 +650,7 @@ class API:
 
         lead_id = self.s.create_lead(
             name, company, contact, need, source="website",
-            ip=ip, ua=(self._user_agent() or "")[:300])
+            ip=ip, ua=(self.user_agent or "")[:300])
 
         # 发邮件通知（未配置 SMTP 时返回 skipped，不算失败）
         status = mailer.send_lead({
@@ -1406,7 +1391,34 @@ class Handler(BaseHTTPRequestHandler):
         """
         store = Store(connect(init_schema=False))
         store.user_id = store.user_id_by_token(self._bearer_token())
-        return API(store)
+        return API(store, client_ip=self._req_client_ip(),
+                   user_agent=self._req_user_agent())
+
+    def _req_client_ip(self) -> str:
+        """真实来源 IP。经 Cloudflare / nginx 时依次看这几个头。
+
+        顺序有讲究：CF-Connecting-IP 是 Cloudflare 写入的、不可被客户端伪造；
+        X-Forwarded-For 可能是客户端自己带的，取首段但排在其后。
+        """
+        try:
+            h = self.headers
+            if not h:
+                return ""
+            cf = (h.get("CF-Connecting-IP") or "").strip()
+            if cf:
+                return cf[:64]
+            fwd = (h.get("X-Forwarded-For") or "").strip()
+            if fwd:
+                return fwd.split(",")[0].strip()[:64]
+            return ((self.client_address[0] if self.client_address else "") or "")[:64]
+        except Exception:
+            return ""
+
+    def _req_user_agent(self) -> str:
+        try:
+            return ((self.headers.get("User-Agent", "") if self.headers else "") or "")[:300]
+        except Exception:
+            return ""
 
     # ---------- 认证
 
