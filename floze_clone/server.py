@@ -714,12 +714,37 @@ class API:
     # ---- IAP -----------------------------------------------------------
     # 商品 ID 带包名前缀：Play Console 里的商品 ID 在应用内全局唯一，
     # 加前缀可避免以后多应用混淆。改这里必须同步 Play Console 配置。
-    IAP_PLANS = {f"top.lurvy.vesperine.heart.plan{i}": i * 5 + 5 for i in range(1, 13)}
+    #
+    # 为什么从 12 档改成 4 档：
+    # 原定义是 {plan{i}: i*5+5 for i in 1..12}，价格 $2.99 + (i-1)*$8.00，
+    # 结果是 plan1=10 hearts/$2.99、plan2=15 hearts/$10.99 ——
+    # 贵 4 倍只多 5 个 hearts，性价比完全不成立，用户无法做选择。
+    #
+    # 现在的档位按「单价递减」设计（大额更划算），这是虚拟货币的通行做法：
+    #   30   hearts  $1.99   $0.066/个
+    #   100  hearts  $4.99   $0.050/个
+    #   300  hearts  $12.99  $0.043/个
+    #   800  hearts  $29.99  $0.037/个
+    #
+    # 参照消耗：一条 classic 消息 2 hearts、一张相册图 21 hearts。
+    # 30 hearts ≈ 15 条对话，$1.99 对首次付费是合适的门槛。
+    #
+    # 注意：这里的 price 只是显示用的参考值，真实价格以 Play Console
+    # 里配置的为准（各区域自动换算）。客户端应优先用 Google 返回的
+    # formattedPrice，拿不到时才回退到这个值。
+    IAP_PLANS = {
+        "top.lurvy.vesperine.hearts30":  {"hearts": 30,  "price": "$1.99",  "label": "入门"},
+        "top.lurvy.vesperine.hearts100": {"hearts": 100, "price": "$4.99",  "label": "常用"},
+        "top.lurvy.vesperine.hearts300": {"hearts": 300, "price": "$12.99", "label": "超值"},
+        "top.lurvy.vesperine.hearts800": {"hearts": 800, "price": "$29.99", "label": "大额"},
+    }
 
     def iap_plans(self) -> dict:
+        """商品列表。字段与旧版兼容（id/hearts/price），新增 label。"""
         out = []
-        for i, (pid, h) in enumerate(self.IAP_PLANS.items()):
-            out.append({"id": pid, "hearts": h, "price": f"${2.99 + i * 8.0:.2f}"})
+        for pid, cfg in self.IAP_PLANS.items():
+            out.append({"id": pid, "hearts": cfg["hearts"],
+                        "price": cfg["price"], "label": cfg["label"]})
         return ok(out)
 
     def iap_purchase(self, body: dict) -> dict:
@@ -727,7 +752,7 @@ class API:
         plan_id = body.get("planId", "")
         if plan_id not in self.IAP_PLANS:
             return err("unknown plan")
-        hearts = self.IAP_PLANS[plan_id]
+        hearts = self.IAP_PLANS[plan_id]["hearts"]
 
         # ── 测试模式：直接发放，不需要真实支付 ──
         if PAYMENT_MODE != "live":

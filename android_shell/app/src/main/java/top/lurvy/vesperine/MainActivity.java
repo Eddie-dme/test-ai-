@@ -31,6 +31,8 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
@@ -49,6 +51,10 @@ public class MainActivity extends Activity {
 
     private static final String PREF = "vesperine_prefs";
     private static final String KEY_URL = "server_url";
+
+    /** Play 结算。懒初始化 —— 只有真正点「充值」时才连商店，
+     *  避免每次启动都拉起 billing service。 */
+    private BillingHelper billing;
 
     private WebView web;
     private ProgressBar bar;
@@ -177,6 +183,33 @@ public class MainActivity extends Activity {
              *
              * 返回：成功时返回保存后的路径，失败返回空串。
              */
+            // ── Google Play 结算 ───────────────────────────────
+            // 这些方法只负责「拿到 purchaseToken」，
+            // 真正的发 hearts 在服务端（iap_verify.py 向 Google 核对）。
+            // 客户端上报的成功状态一律不可信。
+
+            @JavascriptInterface
+            public void queryProducts() {
+                runOnUiThread(() -> getBilling().queryProducts());
+            }
+
+            @JavascriptInterface
+            public void buyHearts(String planId) {
+                runOnUiThread(() -> getBilling().buy(MainActivity.this, planId));
+            }
+
+            @JavascriptInterface
+            public void consumePurchase(String token) {
+                if (token != null && !token.isEmpty()) {
+                    runOnUiThread(() -> getBilling().consume(token));
+                }
+            }
+
+            @JavascriptInterface
+            public void restorePurchases() {
+                runOnUiThread(() -> getBilling().restore());
+            }
+
             @JavascriptInterface
             public String saveImage(String base64, String filename) {
                 try {
@@ -254,6 +287,53 @@ public class MainActivity extends Activity {
 
         String url = prefs.getString(KEY_URL, BuildConfig.SERVER_URL);
         loadApp(url);
+    }
+
+    /**
+     * 取得（或创建）BillingHelper，并把它的回调转成 JS 事件。
+     *
+     * 回调用 evaluateJavascript 而不是 addJavascriptInterface 反向调用 ——
+     * 后者不存在，WebView 只支持 Java→JS 的单向注入。
+     */
+    private BillingHelper getBilling() {
+        if (billing == null) {
+            billing = new BillingHelper(this);
+            billing.setCallback(new BillingHelper.Callback() {
+                @Override
+                public void onProducts(String productsJson) {
+                    js("window.VesperineBilling && window.VesperineBilling.onProducts("
+                            + productsJson + ")");
+                }
+
+                @Override
+                public void onPurchaseToken(String planId, String purchaseToken) {
+                    js("window.VesperineBilling && window.VesperineBilling.onToken("
+                            + JSONObject.quote(planId) + "," + JSONObject.quote(purchaseToken) + ")");
+                }
+
+                @Override
+                public void onError(String code, String message) {
+                    js("window.VesperineBilling && window.VesperineBilling.onError("
+                            + JSONObject.quote(code) + "," + JSONObject.quote(message) + ")");
+                }
+
+                @Override
+                public void onRestoreDone(int count) {
+                    js("window.VesperineBilling && window.VesperineBilling.onRestoreDone(" + count + ")");
+                }
+            });
+        }
+        return billing;
+    }
+
+    /** 在 UI 线程执行一段 JS（evaluateJavascript 要求）。 */
+    private void js(String code) {
+        runOnUiThread(() -> {
+            try {
+                if (web != null) web.evaluateJavascript(code, null);
+            } catch (Throwable ignored) {
+            }
+        });
     }
 
     /**

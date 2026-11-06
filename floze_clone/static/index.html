@@ -1027,11 +1027,16 @@ async function openQuests() {
     + '<div style="font-size:11.5px;color:var(--dim);margin-bottom:14px">'
     + 'Dailies reset each day. Goals are one-time. Tap Claim when complete.</div>'
     + '<div id="qpBody"></div>'
-    + '<button class="ghost" id="qpClose" style="width:100%;padding:10px;margin-top:14px">Close</button>'
+    + '<button class="ghost" id="qpBuy" style="width:100%;padding:10px;margin-top:14px;color:var(--gold);border-color:rgba(216,180,106,.5)">💳 Recharge</button>'
+    + '<button class="ghost" id="qpClose" style="width:100%;padding:10px;margin-top:8px">Close</button>'
     + '</div>';
   document.body.appendChild(mask);
   const close = () => { mask.remove(); refreshWallet(); };
   mask.querySelector('#qpClose').onclick = close;
+  const buyBtn = mask.querySelector('#qpBuy');
+  if (buyBtn) {
+    buyBtn.onclick = () => { close(); openShop(); };
+  }
   mask.onclick = e => { if (e.target === mask) close(); };
 
   const balEl = mask.querySelector('#qpBal');
@@ -1552,6 +1557,165 @@ function confirmDelete(message, confirmLabel) {
     mask.querySelector('#cdYes').onclick = () => done(true);
     mask.onclick = (e) => { if (e.target === mask) done(false); };
   });
+}
+
+/* ---------- 商城（Google Play 结算）----------
+   链路：点购买 → 原生拉起 Play 付款页 → 拿到 purchaseToken
+        → 服务端向 Google 核对 → 发 hearts → 才 consume
+
+   关键：客户端不做任何「购买成功」的判断，只转发 token。
+   服务端校验失败时不能 consume —— 否则用户付了钱还买不了第二次。 */
+
+const SHOP_FALLBACK = [
+  { id: 'top.lurvy.vesperine.hearts30',  hearts: 30,  price: '$1.99',  label: '入门' },
+  { id: 'top.lurvy.vesperine.hearts100', hearts: 100, price: '$4.99',  label: '常用' },
+  { id: 'top.lurvy.vesperine.hearts300', hearts: 300, price: '$12.99', label: '超值' },
+  { id: 'top.lurvy.vesperine.hearts800', hearts: 800, price: '$29.99', label: '大额' },
+];
+
+// 原生是否可用（浏览器里没有这个对象，商城要隐藏或只读）
+function shopAvailable() {
+  return !!(window.VesperineNative && typeof window.VesperineNative.buyHearts === 'function');
+}
+
+// 原生回调 → 前端事件
+window.VesperineBilling = {
+  _pending: null,
+
+  onProducts(json) {
+    try {
+      const list = JSON.parse(json || '[]');
+      if (Array.isArray(list) && list.length) {
+        window.VesperineBilling._products = list;
+        if (window.VesperineBilling._render) window.VesperineBilling._render(list);
+      }
+    } catch (e) { /* 忽略解析失败，用兜底价 */ }
+  },
+
+  async onToken(planId, token) {
+    const pending = window.VesperineBilling._pending;
+    toast('订单已提交，正在校验…');
+    try {
+      const r = await api('/api/heart/purchase', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId, purchaseToken: token })
+      });
+      if (r.flag === 0) {
+        // 只有服务端确认发放了，才 consume
+        window.VesperineNative.consumePurchase(token);
+        toast(`充值成功 +${r.data.hearts} 💖`);
+        refreshWallet();
+        if (pending && pending.done) pending.done(true);
+      } else {
+        // 不 consume —— 保留订单，下次启动 restore 可以补发
+        toast('校验未通过：' + (r.msg || '请联系客服'));
+        if (pending && pending.done) pending.done(false);
+      }
+    } catch (e) {
+      toast('网络异常，订单已保留，稍后会自动补发');
+      if (pending && pending.done) pending.done(false);
+    }
+    window.VesperineBilling._pending = null;
+  },
+
+  onError(code, message) {
+    if (code === 'USER_CANCELED') return;      // 用户主动取消，不打扰
+    toast(message || '购买失败');
+    const pending = window.VesperineBilling._pending;
+    if (pending && pending.done) pending.done(false);
+    window.VesperineBilling._pending = null;
+  },
+
+  onRestoreDone(n) {
+    if (n > 0) toast(`发现 ${n} 笔待补发订单，正在处理…`);
+  }
+};
+
+async function openShop() {
+  const mask = document.createElement('div');
+  mask.style.cssText =
+    'position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:310;'
+    + 'display:flex;align-items:center;justify-content:center;padding:22px';
+  mask.innerHTML =
+    '<div style="background:var(--panel);border:1px solid var(--line);border-radius:14px;'
+    + 'padding:20px;width:100%;max-width:380px;max-height:82vh;overflow-y:auto">'
+    + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">'
+    + '<div style="font-size:15px;font-weight:600">Recharge</div>'
+    + '<div style="font-size:12px;color:var(--gold)">💖 <b id="shopBal">–</b></div></div>'
+    + '<div style="font-size:11.5px;color:var(--dim);margin-bottom:14px">'
+    + 'Payment is handled by Google Play. Your card is charged by Google, not by us.</div>'
+    + '<div id="shopBody"></div>'
+    + '<button class="ghost" id="shopClose" style="width:100%;padding:10px;margin-top:12px">Close</button>'
+    + '</div>';
+  document.body.appendChild(mask);
+
+  const close = () => { mask.remove(); refreshWallet(); };
+  mask.querySelector('#shopClose').onclick = close;
+  mask.onclick = (e) => { if (e.target === mask) close(); };
+
+  const body = mask.querySelector('#shopBody');
+  const balEl = mask.querySelector('#shopBal');
+
+  const hb = await api('/api/heart/list');
+  if (hb.flag === 0 && hb.data?.heartInfo) balEl.textContent = hb.data.heartInfo.amount;
+
+  const native = shopAvailable();
+
+  const render = (products) => {
+    // 用服务端的 hearts 数量 + Play 的本地化价格
+    const byId = {};
+    (products || []).forEach(p => { byId[p.id] = p; });
+    const rows = SHOP_FALLBACK.map(f => {
+      const p = byId[f.id] || {};
+      return {
+        id: f.id,
+        hearts: f.hearts,
+        label: f.label,
+        price: p.price || f.price,      // Play 的格式化价格优先
+      };
+    });
+
+    body.innerHTML = '';
+    rows.forEach(r => {
+      const el = document.createElement('div');
+      el.className = 'qp-row';
+      el.style.marginBottom = '8px';
+      el.innerHTML = '<div class="qp-main">'
+        + '<div class="qp-title">' + esc(r.label) + ' · +' + r.hearts + ' 💖</div>'
+        + '<div class="qp-meta"><span>' + esc(r.price) + '</span></div></div>';
+      const btn = document.createElement('button');
+      btn.className = 'qp-btn' + (native ? ' ready' : '');
+      btn.textContent = native ? 'Buy' : 'Unavailable';
+      if (native) {
+        btn.onclick = () => {
+          btn.disabled = true; btn.textContent = '…';
+          window.VesperineBilling._pending = {
+            planId: r.id,
+            done: () => { btn.disabled = false; btn.textContent = 'Buy'; }
+          };
+          window.VesperineNative.buyHearts(r.id);
+        };
+      }
+      el.appendChild(btn);
+      body.appendChild(el);
+    });
+
+    if (!native) {
+      const note = document.createElement('div');
+      note.style.cssText = 'font-size:11.5px;color:var(--muted-2);margin-top:10px;line-height:1.6';
+      note.textContent = 'In-app purchases are only available in the Android app from Google Play.';
+      body.appendChild(note);
+    }
+  };
+
+  window.VesperineBilling._render = render;
+  render(window.VesperineBilling._products || SHOP_FALLBACK);
+
+  if (native) {
+    window.VesperineNative.queryProducts();
+    // 顺带补发历史未消费订单（付款成功但没到账的情况）
+    window.VesperineNative.restorePurchases();
+  }
 }
 
 /* ---------- 图片查看器（全屏预览 + 保存）----------

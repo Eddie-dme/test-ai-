@@ -30,6 +30,15 @@ export ANDROID_HOME="${ANDROID_HOME:-$TOOLCHAIN/android-sdk}"
 
 BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
 PLATFORM="$ANDROID_HOME/platforms/android-36/android.jar"
+
+# ── 第三方库（只有一个）─────────────────────────────────────────
+# com.android.billingclient 5.0.0：Google Play 结算客户端。
+# 选 5.0.0 而不是最新版，因为它 POM 里零依赖 —— 7.x 会拖进
+# androidx + play-services + datatransport 共 8 个库、约 500KB。
+# 5.0.0 是 fat AAR（依赖都被 shade 进去了），只需这一个 147KB 的 jar。
+# 唯一的外部引用 androidx.core.app.BundleCompat 由自写 stub 提供，
+# 见 app/src/main/java/androidx/core/app/BundleCompat.java。
+BILLING_JAR="$PWD/libs/billing-5.0.0.jar"
 BUNDLETOOL="${BUNDLETOOL:-$PWD/../toolchain/bundletool-all-1.18.3.jar}"
 APP="app/src/main"
 # ── 版本号（唯一真源）──────────────────────────────────────────────
@@ -53,7 +62,7 @@ AAB_TMP="$OUT/.vesperine-release.aab.tmp"
 trap 'rm -f "$AAB_TMP"' EXIT
 
 echo "── 环境检查 ──"
-for f in "$JAVA_HOME/bin/javac" "$JAVA_HOME/bin/jarsigner" "$BUILD_TOOLS/aapt2" "$BUILD_TOOLS/d8" "$PLATFORM"; do
+for f in "$JAVA_HOME/bin/javac" "$JAVA_HOME/bin/jarsigner" "$BUILD_TOOLS/aapt2" "$BUILD_TOOLS/d8" "$PLATFORM" "$BILLING_JAR"; do
   [ -e "$f" ] || { echo "❌ 缺少: $f"; exit 1; }
 done
 [ -e "$BUNDLETOOL" ] || { echo "❌ 缺少 bundletool: $BUNDLETOOL"; exit 1; }
@@ -95,7 +104,7 @@ echo
 echo "── 3/7 编译 Java 源码（javac）──"
 find "$APP/java" "$WORK/gen" -name '*.java' > "$WORK/sources.txt"
 "$JAVA_HOME/bin/javac" -nowarn -encoding UTF-8 \
-  -classpath "$PLATFORM" -d "$WORK/classes" @"$WORK/sources.txt"
+  -classpath "$PLATFORM:$BILLING_JAR" -d "$WORK/classes" @"$WORK/sources.txt"
 CLS=$(find "$WORK/classes" -name '*.class' | wc -l | tr -d ' ')
 [ "$CLS" -gt 0 ] || { echo "❌ 没有生成任何 class"; exit 1; }
 echo "✅ 编译完成（$CLS 个 class）"
@@ -103,7 +112,7 @@ echo "✅ 编译完成（$CLS 个 class）"
 echo
 echo "── 4/7 转 dex（d8）──"
 "$BUILD_TOOLS/d8" --release --min-api 24 --lib "$PLATFORM" \
-  --output "$WORK/dex" $(find "$WORK/classes" -name '*.class')
+  --output "$WORK/dex" $(find "$WORK/classes" -name '*.class') "$BILLING_JAR"
 [ -f "$WORK/dex/classes.dex" ] || { echo "❌ dex 生成失败"; exit 1; }
 echo "✅ dex：$(ls -lh "$WORK/dex/classes.dex" | awk '{print $5}')"
 

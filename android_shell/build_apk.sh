@@ -25,6 +25,9 @@ export ANDROID_HOME="${ANDROID_HOME:-$TOOLCHAIN/android-sdk}"
 
 BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
 PLATFORM="$ANDROID_HOME/platforms/android-36/android.jar"
+
+# 见 build_aab.sh 的说明：billing 5.0.0 是 fat AAR，零外部依赖
+BILLING_JAR="$PWD/libs/billing-5.0.0.jar"
 APP="app/src/main"
 
 # 版本号（与 build_aab.sh 保持一致，改一处记得同步另一处）
@@ -37,7 +40,7 @@ KEYSTORE="$PWD/debug.keystore"
 PKG_PATH="top/lurvy/vesperine"
 
 echo "── 环境检查 ──"
-for f in "$JAVA_HOME/bin/javac" "$BUILD_TOOLS/aapt2" "$BUILD_TOOLS/d8" "$BUILD_TOOLS/apksigner" "$BUILD_TOOLS/zipalign" "$PLATFORM"; do
+for f in "$JAVA_HOME/bin/javac" "$BUILD_TOOLS/aapt2" "$BUILD_TOOLS/d8" "$BUILD_TOOLS/apksigner" "$BUILD_TOOLS/zipalign" "$PLATFORM" "$BILLING_JAR"; do
   [ -e "$f" ] || { echo "❌ 缺少: $f"; exit 1; }
 done
 echo "✅ JDK / aapt2 / d8 / apksigner / zipalign / android.jar 就绪"
@@ -81,7 +84,7 @@ echo
 find "$APP/java" "$OUT/gen" -name '*.java' > "$OUT/sources.txt"
 # 注意：JDK 17 已废弃 -bootclasspath，Android 构建只需把 android.jar 放到 -classpath
 "$JAVA_HOME/bin/javac" -nowarn -encoding UTF-8 \
-  -classpath "$PLATFORM" \
+  -classpath "$PLATFORM:$BILLING_JAR" \
   -d "$OUT/classes" @"$OUT/sources.txt"
 CLS=$(find "$OUT/classes" -name '*.class' | wc -l | tr -d ' ')
 if [ "$CLS" -eq 0 ]; then echo "❌ 没有生成任何 class，编译失败"; exit 1; fi
@@ -90,7 +93,7 @@ echo "✅ 编译完成（$CLS 个 class）"
 echo
  echo "── 4/5 转 dex（d8）──"
 "$BUILD_TOOLS/d8" --release --min-api 24 --lib "$PLATFORM" \
-  --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
+  --output "$OUT/dex" $(find "$OUT/classes" -name '*.class') "$BILLING_JAR"
 [ -f "$OUT/dex/classes.dex" ] || { echo "❌ dex 生成失败"; exit 1; }
 echo "✅ dex 生成：$(ls -lh "$OUT/dex/classes.dex" | awk '{print $5}')"
 

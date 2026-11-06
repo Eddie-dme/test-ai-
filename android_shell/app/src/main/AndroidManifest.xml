@@ -24,12 +24,30 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- Google Play 结算。这个权限是 billing 库的 AndroidManifest 里声明的，
+         但我们不走 Gradle，没有 manifest merger，只能手工合并过来。 -->
+    <uses-permission android:name="com.android.vending.BILLING" />
+
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
         android:theme="@style/AppTheme">
+
+        <!-- billing 5.0.0 的 ProxyBillingActivity。
+             付款界面由 Play 商店进程渲染，这个 Activity 只做中转，
+             exported=false 是对的 —— 不需要被外部启动。
+             同样来自 billing 的 manifest，手工合并。 -->
+        <activity
+            android:name="com.android.billingclient.api.ProxyBillingActivity"
+            android:configChanges="keyboard|keyboardHidden|screenLayout|screenSize|orientation"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <meta-data
+            android:name="com.google.android.play.billingclient.version"
+            android:value="5.0.0" />
 
         <activity
             android:name=".MainActivity"
