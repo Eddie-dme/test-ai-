@@ -3,11 +3,18 @@ package top.lurvy.vesperine;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.media.MediaScannerConnection;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.util.Base64;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -23,6 +30,10 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 
 /**
  * Vesperine —— 主 Activity
@@ -155,6 +166,82 @@ public class MainActivity extends Activity {
             @JavascriptInterface
             public void openServerSettings() {
                 runOnUiThread(MainActivity.this::promptForUrl);
+            }
+
+            /**
+             * 把 base64 图片存进系统相册。
+             *
+             * 为什么用 base64 而不是让前端给 URL：WebView 里的 <a download>
+             * 在多数 Android 版本上不生效，前端拿不到文件系统。由原生侧
+             * 解码落盘再由 MediaStore 登记，相册和文件管理器里都能看到。
+             *
+             * 返回：成功时返回保存后的路径，失败返回空串。
+             */
+            @JavascriptInterface
+            public String saveImage(String base64, String filename) {
+                try {
+                    if (base64 == null || base64.isEmpty()) return "";
+                    // 前端可能带 data URI 前缀
+                    int comma = base64.indexOf(',');
+                    if (base64.startsWith("data:") && comma > 0) {
+                        base64 = base64.substring(comma + 1);
+                    }
+                    byte[] raw = Base64.decode(base64, Base64.DEFAULT);
+                    if (raw.length == 0) return "";
+
+                    String name = (filename == null || filename.trim().isEmpty())
+                            ? "vesperine-" + System.currentTimeMillis() + ".jpeg"
+                            : filename.trim();
+                    if (!name.toLowerCase().endsWith(".jpeg")
+                            && !name.toLowerCase().endsWith(".jpg")
+                            && !name.toLowerCase().endsWith(".png")) {
+                        name = name + ".jpeg";
+                    }
+
+                    String saved;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        // Android 10+：走 MediaStore，不需要任何存储权限
+                        ContentValues cv = new ContentValues();
+                        cv.put(MediaStore.Images.Media.DISPLAY_NAME, name);
+                        cv.put(MediaStore.Images.Media.MIME_TYPE,
+                               name.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg");
+                        cv.put(MediaStore.Images.Media.RELATIVE_PATH,
+                               Environment.DIRECTORY_PICTURES + "/Vesperine");
+                        cv.put(MediaStore.Images.Media.IS_PENDING, 1);
+                        Uri uri = getContentResolver()
+                                .insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
+                        if (uri == null) return "";
+                        try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+                            if (os == null) return "";
+                            os.write(raw);
+                        }
+                        cv.clear();
+                        cv.put(MediaStore.Images.Media.IS_PENDING, 0);
+                        getContentResolver().update(uri, cv, null, null);
+                        saved = uri.toString();
+                    } else {
+                        // Android 9 及以下：写公共 Pictures 目录再通知媒体库扫描
+                        File dir = new File(Environment.getExternalStoragePublicDirectory(
+                                Environment.DIRECTORY_PICTURES), "Vesperine");
+                        if (!dir.exists() && !dir.mkdirs()) return "";
+                        File out = new File(dir, name);
+                        try (FileOutputStream fos = new FileOutputStream(out)) {
+                            fos.write(raw);
+                        }
+                        MediaScannerConnection.scanFile(
+                                MainActivity.this, new String[]{out.getAbsolutePath()},
+                                null, null);
+                        saved = out.getAbsolutePath();
+                    }
+                    final String path = saved;
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                            "已保存到相册 Vesperine", Toast.LENGTH_SHORT).show());
+                    return path;
+                } catch (Throwable t) {
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                            "保存失败：" + t.getMessage(), Toast.LENGTH_LONG).show());
+                    return "";
+                }
             }
         }, "VesperineNative");
         web.setWebChromeClient(new WebChromeClient() {

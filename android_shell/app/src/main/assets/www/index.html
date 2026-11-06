@@ -1477,10 +1477,123 @@ async function renderAlbum() {
     cell.className = 'cell';
     cell.innerHTML = `<img src="${API_BASE}${esc(it.url)}" alt="${esc(it.prompt)}" loading="lazy">
       <span class="tag">${esc(it.source)}${it.heart_cost ? ' · ' + it.heart_cost + '💖' : ' · 免费'}</span>`;
+    // 点击查看大图 —— 原先前端完全没接，用户点图片毫无反应，
+    // 也没法保存到本地。这是功能缺失，不是加载失败。
+    cell.querySelector('img').onclick = () => openImageViewer(it);
     grid.appendChild(cell);
   }
   box.appendChild(grid);
   api('/api/album/mark-read', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+}
+
+/* ---------- 图片查看器（全屏预览 + 保存）----------
+   为什么不用 <a download>：WebView 里这个属性在多数 Android 版本上
+   不生效，点了没反应。保存必须走原生接口 VesperineNative.saveImage()，
+   由 Java 侧解码落盘并登记到系统相册。
+   浏览器环境（Web 版）走 Blob + a[download]，那条路子是可用的。 */
+async function openImageViewer(item) {
+  const src = API_BASE + item.url;
+
+  const mask = document.createElement('div');
+  mask.style.cssText =
+    'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:300;'
+    + 'display:flex;flex-direction:column;align-items:center;justify-content:center;'
+    + 'padding:20px;gap:16px';
+
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = item.prompt || '';
+  img.style.cssText =
+    'max-width:100%;max-height:72vh;object-fit:contain;border-radius:10px;'
+    + 'box-shadow:0 20px 60px rgba(0,0,0,.6)';
+
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;justify-content:center';
+
+  const mkBtn = (label, primary) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = primary
+      ? 'padding:10px 22px;border-radius:10px;border:0;background:var(--gold);'
+        + 'color:#1a1526;font-size:13.5px;font-weight:600;cursor:pointer'
+      : 'padding:10px 22px;border-radius:10px;border:1px solid var(--line);'
+        + 'background:rgba(255,255,255,.06);color:var(--ink);font-size:13.5px;cursor:pointer';
+    return b;
+  };
+
+  const saveBtn = mkBtn('保存到相册', true);
+  const closeBtn = mkBtn('关闭', false);
+  bar.appendChild(saveBtn);
+  bar.appendChild(closeBtn);
+
+  const prompt = document.createElement('div');
+  prompt.textContent = item.prompt || '';
+  prompt.style.cssText =
+    'max-width:640px;font-size:12px;color:var(--dim);line-height:1.6;'
+    + 'text-align:center;word-break:break-word';
+
+  mask.appendChild(img);
+  mask.appendChild(bar);
+  if (item.prompt) mask.appendChild(prompt);
+  document.body.appendChild(mask);
+
+  const close = () => mask.remove();
+  closeBtn.onclick = close;
+  mask.onclick = (e) => { if (e.target === mask) close(); };
+
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    const label = saveBtn.textContent;
+    saveBtn.textContent = '保存中…';
+    try {
+      const ok = await saveImageToDevice(src, item);
+      toast(ok ? '已保存到相册' : '保存失败');
+    } catch (e) {
+      toast('保存失败：' + (e.message || e));
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = label;
+    }
+  };
+}
+
+/* 把远程图片保存到设备。
+   APK 内：转 base64 交给 VesperineNative.saveImage()，由原生写 MediaStore。
+   浏览器内：fetch → Blob → a[download]（这条在浏览器里有效）。 */
+async function saveImageToDevice(url, item) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('图片下载失败 HTTP ' + resp.status);
+  const blob = await resp.blob();
+
+  const name = 'vesperine-' + (item && item.id ? item.id : Date.now())
+             + (blob.type === 'image/png' ? '.png' : '.jpeg');
+
+  const native = window.VesperineNative;
+  if (native && typeof native.saveImage === 'function') {
+    const b64 = await blobToBase64(blob);
+    const path = native.saveImage(b64, name);
+    return !!path;
+  }
+
+  // 浏览器兜底
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objUrl;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
+  return true;
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ''));
+    fr.onerror = () => reject(fr.error || new Error('读取图片失败'));
+    fr.readAsDataURL(blob);
+  });
 }
 
 /* ---------- 创作者主页 ---------- */
