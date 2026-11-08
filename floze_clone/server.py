@@ -1238,13 +1238,18 @@ class API:
     CHECKIN_HEARTS = 10
 
     def daily_checkin(self) -> dict:
-        """每日签到。零成本，是零余额用户唯一的自救路径。"""
+        """每日签到。零成本，是零余额用户唯一的自救路径。
+
+        不再先 has_checked_in() 再 add_hearts()：那两步之间没有互斥，
+        实测 12 个并发请求会拿到 2 次发放。改成 add_hearts_once()，
+        由唯一索引保证一天只有一次能写进流水。
+        """
         u = self.s.ensure_user()
         day = time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
-        if self.s.has_checked_in(u["id"], day):
+        r = self.s.add_hearts_once(u["id"], self.CHECKIN_HEARTS, "checkin:" + day)
+        if not r["granted"]:
             return err("ALREADY_CHECKED_IN")
-        balance = self.s.add_hearts(u["id"], self.CHECKIN_HEARTS, "checkin:" + day)
-        return ok({"hearts": self.CHECKIN_HEARTS, "balance": balance, "day": day})
+        return ok({"hearts": self.CHECKIN_HEARTS, "balance": r["balance"], "day": day})
 
     def checkin_status(self) -> dict:
         u = self.s.ensure_user()
@@ -1932,8 +1937,16 @@ class Handler(BaseHTTPRequestHandler):
 
         acc = []
         blocked = False
+        # 用量先攒在一个可变量里，流结束后统一落库。
+        # on_usage 在生成器的 finally 里调用，即使下面 break 也会拿到值。
+        _usage: dict = {}
+
+        def _on_usage(rec: dict) -> None:
+            _usage.update(rec)
+
         try:
-            for piece in llm.chat_stream(role, persona, memory, history, chatroom["chat_mode"]):
+            for piece in llm.chat_stream(role, persona, memory, history,
+                                         chatroom["chat_mode"], on_usage=_on_usage):
                 acc.append(piece)
                 # 出站审核 —— 必须在推送前检查。
                 # 只拦用户输入不够：Play 生成式 AI 政策要求对**模型输出**也做过滤，
@@ -1947,6 +1960,16 @@ class Handler(BaseHTTPRequestHandler):
             emit({"event": "error", "msg": str(ex)[:200]})
 
         if blocked:
+            # 被拦下的那次调用上游已经花完了 token —— 不计入就是把
+            # 最该看见的成本漏掉。blocked=1 单独标出，便于观察拦截率。
+            #
+            # 注意：拦截发生在流中段，usage 帧通常在流的最后一帧，
+            # 所以这里几乎必然走估算分支（estimated=1），且 output_tokens
+            # 只计了已收到的部分 —— **这类记录是成本下界，不是准确值**。
+            # 不为记账把违规内容读完：内容已经违规，继续解析只会扩大暴露。
+            if _usage:
+                store.record_usage(u["id"], cid, chatroom["chat_mode"],
+                                   _usage, blocked=True)
             # 不落库：违规内容一旦进 messages 表，就从「过滤」变成了「持有」。
             emit({"event": "error", "code": "CONTENT_BLOCKED",
                   "msg": "该回复未通过内容安全检查，已中止。"})
@@ -1957,6 +1980,8 @@ class Handler(BaseHTTPRequestHandler):
         mid = None
         if full:
             mid = store.add_message(cid, "assistant", full)
+        if _usage:
+            store.record_usage(u["id"], cid, chatroom["chat_mode"], _usage)
         # messageId 回传前端：AI 回复必须可在应用内举报（同一政策要求）
         emit({"event": "done", "length": len(full), "messageId": mid})
 

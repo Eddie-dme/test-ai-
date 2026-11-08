@@ -334,29 +334,110 @@ def _post(payload: dict, timeout: int = 180, retries: int = 4) -> dict:
     raise RuntimeError(last or "request failed")
 
 
+# 是否让上游在流式响应里回传 token 用量。
+#
+# OpenAI 兼容协议下，流式默认**不**返回 usage，必须显式传
+# stream_options:{"include_usage": true}。不确定上游支不支持，所以做成
+# 自适应：带上去试，被 4xx 拒了就记住不再带（只付一次探测成本）。
+# 拿不到 usage 时退化为估算，并在落库时标 estimated，不把估算当账单。
+_USAGE_SUPPORTED = True
+
+
 def chat_stream(role: dict, persona: dict, memory: str,
-                history: list[tuple], chat_mode: str) -> Iterator[str]:
-    """流式生成回复片段。"""
+                history: list[tuple], chat_mode: str,
+                on_usage=None) -> Iterator[str]:
+    """流式生成回复片段。
+
+    on_usage: 可选回调，在流结束时（无论正常完成、审核中断还是客户端
+    断开）调用一次，参数是本次调用的用量与成本事实：
+        {model, input_tokens, output_tokens, total_tokens, cached_tokens,
+         estimated: bool, mock: bool}
+
+    为什么放在 finally 里：内容被安全审核拦下的那次请求，上游**已经**
+    消耗了 token（模型把话说完了，只是我们没推给用户）。不计入就等于
+    把成本漏记，而这类拦截恰恰是最该被看见的那一类。
+    """
+    global _USAGE_SUPPORTED
+
     cfg = mode_config(chat_mode)
     messages = trim_to_budget(
         build_messages(role, persona, memory, history, chat_mode),
         budget=context_limit(cfg["model"]) - 2_000)     # 留输出余量
 
+    model_name = resolve_model(cfg["model"])
+    usage: dict = {}
+    produced: list[str] = []
+
+    def _report(mock: bool = False) -> None:
+        if not on_usage:
+            return
+        if usage.get("prompt_tokens") is not None:
+            rec = {
+                "model": model_name,
+                "input_tokens": int(usage.get("prompt_tokens") or 0),
+                "output_tokens": int(usage.get("completion_tokens") or 0),
+                "total_tokens": int(usage.get("total_tokens") or 0)
+                or int(usage.get("prompt_tokens") or 0)
+                + int(usage.get("completion_tokens") or 0),
+                "cached_tokens": int((usage.get("prompt_tokens_details") or {})
+                                     .get("cached_tokens") or 0),
+                "estimated": False,
+                "mock": mock,
+            }
+        else:
+            # 上游没回 usage：用与 trim 同口径的估算，并明确标记
+            rec = {
+                "model": model_name,
+                "input_tokens": estimate_tokens(messages),
+                "output_tokens": len("".join(produced)) // 4,
+                "total_tokens": 0,
+                "cached_tokens": 0,
+                "estimated": True,
+                "mock": mock,
+            }
+            rec["total_tokens"] = rec["input_tokens"] + rec["output_tokens"]
+        try:
+            on_usage(rec)
+        except Exception:
+            pass        # 计量永远不应该弄坏一次聊天
+
     if not api_key():
-        yield from _mock_stream(role, cfg)
+        try:
+            for piece in _mock_stream(role, cfg):
+                produced.append(piece)
+                yield piece
+        finally:
+            _report(mock=True)
         return
 
-    payload = {"model": resolve_model(cfg["model"]), "messages": messages,
-               "temperature": cfg["temperature"], "top_p": 0.95,
-               "max_completion_tokens": cfg["max_tokens"], "stream": True,
-               **thinking_params(cfg["model"])}
-    req = urllib.request.Request(
-        f"{API_BASE}/chat/completions", data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {api_key()}",
-                 "Content-Type": "application/json"}, method="POST")
+    base_payload = {"model": model_name, "messages": messages,
+                    "temperature": cfg["temperature"], "top_p": 0.95,
+                    "max_completion_tokens": cfg["max_tokens"], "stream": True,
+                    **thinking_params(cfg["model"])}
+
+    def _request(include_usage: bool):
+        payload = dict(base_payload)
+        if include_usage:
+            payload["stream_options"] = {"include_usage": True}
+        return urllib.request.Request(
+            f"{API_BASE}/chat/completions", data=json.dumps(payload).encode(),
+            headers={"Authorization": f"Bearer {api_key()}",
+                     "Content-Type": "application/json"}, method="POST")
 
     def _raw() -> Iterator[str]:
-        with urllib.request.urlopen(req, timeout=180) as r:
+        global _USAGE_SUPPORTED
+        req = _request(_USAGE_SUPPORTED)
+        try:
+            resp = urllib.request.urlopen(req, timeout=180)
+        except urllib.error.HTTPError as e:
+            # 带 stream_options 被拒（上游不认识这个字段）→ 记住并去掉重试。
+            # 只探测一次，后续请求不再附带。
+            if _USAGE_SUPPORTED and 400 <= e.code < 500:
+                _USAGE_SUPPORTED = False
+                resp = urllib.request.urlopen(_request(False), timeout=180)
+            else:
+                raise
+        with resp as r:
             for raw in r:
                 line = raw.decode("utf-8", "replace").strip()
                 if not line.startswith("data:"):
@@ -368,6 +449,11 @@ def chat_stream(role: dict, persona: dict, memory: str,
                     d = json.loads(chunk)
                 except Exception:
                     continue
+                # usage 可能出现在任意一个 chunk（通常最后一个），
+                # 也可能完全不存在 —— 不带 choices 的纯 usage 帧很常见。
+                u = d.get("usage")
+                if isinstance(u, dict) and u.get("prompt_tokens") is not None:
+                    usage.update(u)
                 choices = d.get("choices") or [{}]
                 delta = choices[0].get("delta") or {}
                 piece = delta.get("content") or ""
@@ -377,7 +463,12 @@ def chat_stream(role: dict, persona: dict, memory: str,
                 yield piece
 
     # 关键：过滤 <think> 区间，避免角色内心独白泄漏给用户
-    yield from strip_reasoning_stream(_raw())
+    try:
+        for piece in strip_reasoning_stream(_raw()):
+            produced.append(piece)
+            yield piece
+    finally:
+        _report()
 
 
 def _mock_stream(role: dict, cfg: dict) -> Iterator[str]:

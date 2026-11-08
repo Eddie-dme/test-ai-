@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 import time
 
 import auth
@@ -94,6 +95,23 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at      REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL,
+    chatroom_id     INTEGER,
+    model           TEXT NOT NULL DEFAULT '',
+    chat_mode       TEXT NOT NULL DEFAULT '',
+    input_tokens    INTEGER NOT NULL DEFAULT 0,
+    output_tokens   INTEGER NOT NULL DEFAULT 0,
+    cached_tokens   INTEGER NOT NULL DEFAULT 0,
+    estimated       INTEGER NOT NULL DEFAULT 0,  -- 1=上游没回 usage，本行是估算
+    mock            INTEGER NOT NULL DEFAULT 0,  -- 1=mock 模式，无真实成本
+    blocked         INTEGER NOT NULL DEFAULT 0,  -- 1=输出被安全审核拦下
+    created_at      REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_created ON llm_usage(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_user ON llm_usage(user_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS heart_ledger (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         INTEGER NOT NULL,
@@ -101,6 +119,18 @@ CREATE TABLE IF NOT EXISTS heart_ledger (
     reason          TEXT NOT NULL,        -- chat/ugc/moment/ad_reward/purchase
     created_at      REAL NOT NULL
 );
+
+-- 一次性发放的唯一索引不在 SCHEMA 里建，见 connect() 调用的 _post_schema()。
+--
+-- 原因：漏洞存在期间，线上可能已经产生了重复的 checkin:<day> 记录。
+-- 直接在 SCHEMA 里 CREATE UNIQUE INDEX，遇到那些历史数据会抛 IntegrityError，
+-- 而 executescript 是整段执行的 —— 结果是服务直接起不来。
+-- 建索引前必须先清理重复，所以拆成单独一步。
+--
+-- 这个约束本身是必需的：daily_checkin 之前是 has_checked_in() 先 SELECT、
+-- add_hearts() 再 INSERT，两步之间没有任何互斥。实测 12 个并发请求能拿到
+-- 2 次发放（余额 30→40→50，流水里两条 checkin:2026-11-07）——
+-- 一个循环就能把每天 +10 放大成任意倍数。
 
 CREATE TABLE IF NOT EXISTS ad_quota (
     user_id         INTEGER NOT NULL,
@@ -437,6 +467,56 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _dedupe_checkin_ledger(conn: sqlite3.Connection) -> int:
+    """把历史上重复的签到流水改名，为唯一索引让路。返回改名条数。
+
+    为什么是「改名」而不是「删除」：多发放的 hearts 已经计入
+    users.hearts 了，删掉流水会让账目两边对不上，也没了审计痕迹。
+    改成 checkin:<day>#dup2 这样的后缀，既保留完整历史，
+    又让 (user_id, reason) 重新唯一。
+
+    保留 id 最小（最早）的那一条原样不动 —— 它是合法的那次签到；
+    has_checked_in() 用 reason == 'checkin:'+day 精确匹配，
+    改名后的记录不会被误当成「已签到」。
+    """
+    dup = conn.execute(
+        "SELECT user_id, reason, COUNT(*) AS c FROM heart_ledger"
+        " WHERE reason GLOB 'checkin:*'"
+        " GROUP BY user_id, reason HAVING c > 1").fetchall()
+    renamed = 0
+    for user_id, reason, _cnt in dup:
+        ids = [r[0] for r in conn.execute(
+            "SELECT id FROM heart_ledger WHERE user_id=? AND reason=? ORDER BY id",
+            (user_id, reason)).fetchall()]
+        for i, rid in enumerate(ids[1:], start=2):
+            conn.execute("UPDATE heart_ledger SET reason=? WHERE id=?",
+                         (f"{reason}#dup{i}", rid))
+            renamed += 1
+    if renamed:
+        conn.commit()
+    return renamed
+
+
+def _post_schema(conn: sqlite3.Connection) -> None:
+    """建表之后才能做的事：清理历史重复数据，再建立一次性发放的唯一索引。
+
+    单独成一步而不是写进 SCHEMA，是因为历史重复数据会让
+    CREATE UNIQUE INDEX 抛 IntegrityError，而 executescript 是整段执行，
+    一旦抛就是服务起不来 —— 删库或新机器没问题，升级旧库必炸。
+    """
+    try:
+        _dedupe_checkin_ledger(conn)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_heart_ledger_once"
+            " ON heart_ledger(user_id, reason) WHERE reason GLOB 'checkin:*'")
+        conn.commit()
+    except sqlite3.Error as e:
+        # 建不上索引就意味着 add_hearts_once 的判重退化成「靠运气」，
+        # 这必须被看见，不能默默继续跑。
+        print(f"⚠️  heart_ledger 唯一索引建立失败：{e} "
+              f"—— 签到并发防护未生效，需人工检查", file=sys.stderr)
+
+
 def connect(init_schema: bool = True) -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -446,6 +526,7 @@ def connect(init_schema: bool = True) -> sqlite3.Connection:
         # 顺序倒过来的话，旧库会在建索引时报 no such column。
         _migrate(conn)
         conn.executescript(SCHEMA)          # 幂等
+        _post_schema(conn)                  # 去重 + 唯一索引
     return conn
 
 
@@ -596,7 +677,7 @@ class Store:
         "role_affinity", "chapter_unlocks", "affinity_log", "scenario_likes",
         "creators", "creator_blocks", "follow_reads", "album_items",
         "user_quests", "user_achievements", "notifications", "user_stickers",
-        "moderation_events", "iap_purchases",
+        "moderation_events", "iap_purchases", "llm_usage",
     )
 
     def delete_user(self, user_id: int) -> dict:
@@ -655,10 +736,69 @@ class Store:
         r = self.c.execute("SELECT hearts FROM users WHERE id=?", (user_id,)).fetchone()
         return r["hearts"]
 
+    def add_hearts_once(self, user_id: int, delta: int, reason: str) -> dict:
+        """只在流水里没有相同 (user_id, reason) 时发放，保证「一天只能领一次」。
+
+        与 add_hearts 的区别：那个无条件发，这个由唯一索引兜底。
+        调用方不再需要先查一遍再写 —— 「先查后写」正是并发双发的根因。
+
+        实现要点：
+          - 先 INSERT 流水，用 rowcount 判断是不是真的首次。
+            **不能先写余额再写流水**：那样并发时两边都会加余额，
+            只是最后流水被索引挡住，钱已经多发了。
+          - 插入与余额更新在同一个隐式事务里，中间不 commit。
+          - 返回值带 granted，调用方据此决定回「已签到」还是发成功。
+
+        依赖 idx_heart_ledger_once（见 _post_schema）。若索引意外缺失，
+        INSERT OR IGNORE 会真的插入重复行，所以 _post_schema 建失败时会告警。
+        """
+        try:
+            cur = self.c.execute(
+                "INSERT OR IGNORE INTO heart_ledger"
+                " (user_id, delta, reason, created_at) VALUES (?,?,?,?)",
+                (user_id, delta, reason, now()))
+            granted = cur.rowcount == 1
+            if granted:
+                self.c.execute(
+                    "UPDATE users SET hearts = MAX(0, hearts + ?) WHERE id=?",
+                    (delta, user_id))
+            self.c.commit()
+        except sqlite3.IntegrityError:
+            # OR IGNORE 本不该抛，但索引缺失时唯一约束行为可能不同，兜底。
+            self.c.rollback()
+            granted = False
+        r = self.c.execute("SELECT hearts FROM users WHERE id=?", (user_id,)).fetchone()
+        return {"granted": granted, "balance": r["hearts"]}
+
     def heart_info(self, user_id: int) -> dict:
         r = self.c.execute(
             "SELECT hearts, unlimited_until FROM users WHERE id=?", (user_id,)).fetchone()
         return {"amount": r["hearts"], "unlimitedHeartsExpiredAt": r["unlimited_until"]}
+
+    # ---- LLM 用量 -----------------------------------------------------
+    def record_usage(self, user_id: int, chatroom_id: int | None, chat_mode: str,
+                     usage: dict, blocked: bool = False) -> None:
+        """记一条模型调用用量。
+
+        失败时静默 —— 计量是旁路，不能因为它写不进去就让一次聊天失败。
+        （写入失败会在 stdout 留下告警，不至于无影无踪。）
+        """
+        try:
+            self.c.execute(
+                "INSERT INTO llm_usage (user_id, chatroom_id, model, chat_mode,"
+                " input_tokens, output_tokens, cached_tokens, estimated, mock,"
+                " blocked, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (user_id, chatroom_id, usage.get("model", ""), chat_mode,
+                 int(usage.get("input_tokens") or 0),
+                 int(usage.get("output_tokens") or 0),
+                 int(usage.get("cached_tokens") or 0),
+                 1 if usage.get("estimated") else 0,
+                 1 if usage.get("mock") else 0,
+                 1 if blocked else 0,
+                 now()))
+            self.c.commit()
+        except sqlite3.Error as e:
+            print(f"⚠️  llm_usage 写入失败：{e}", file=sys.stderr)
 
     # ---- role -------------------------------------------------------
     def list_roles(self) -> list[dict]:
@@ -1430,6 +1570,16 @@ class Store:
         self.c.commit()
 
     def claim_quest(self, user_id: int, quest_id: int) -> dict:
+        """领取任务奖励。
+
+        并发安全靠 UPDATE ... AND claimed=0 的 rowcount，不是一个先把
+        claimed 读出来再判断的 if 语句 —— 后者在两步之间有窗口，
+        两个并发请求都能看到 claimed=0。（实测 12 并发只复现 1 次，
+        窗口比签到小，但结构是同一个缺陷。）
+
+        顺序也很关键：先改状态标记，拿到 rowcount==1 才认为本次领取有效，
+        余额由调用方在拿到 ok=True 之后再加。绝不能反过来。
+        """
         q = self.c.execute("SELECT * FROM quests WHERE id=?", (quest_id,)).fetchone()
         if not q:
             return {"ok": False, "reason": "not found"}
@@ -1439,13 +1589,15 @@ class Store:
             (user_id, quest_id, today)).fetchone()
         if not uq or uq["progress"] < q["target"]:
             return {"ok": False, "reason": "not completed"}
-        if uq["claimed"]:
-            return {"ok": False, "reason": "already claimed"}
-        self.c.execute(
+        # 原子占位：只有仍为未领取的那一次能改成功
+        cur = self.c.execute(
             "UPDATE user_quests SET claimed=1, updated_at=?"
-            " WHERE user_id=? AND quest_id=? AND day=?",
+            " WHERE user_id=? AND quest_id=? AND day=? AND claimed=0",
             (now(), user_id, quest_id, today))
+        won = cur.rowcount == 1
         self.c.commit()
+        if not won:
+            return {"ok": False, "reason": "already claimed"}
         return {"ok": True, "hearts": q["reward_hearts"]}
 
     def list_achievements(self, user_id: int) -> list[dict]:
