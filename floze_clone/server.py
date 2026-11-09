@@ -369,6 +369,30 @@ class API:
         return ok(self.s.create_chatroom(u["id"], role_id, mode,
                                         body.get("model", "standard")))
 
+    def chatroom_mode(self, body: dict) -> dict:
+        """切换已有会话的档位。
+
+        必须在服务端落库：计费读的是 chatrooms.chat_mode，
+        只改前端显示就是「UI 显示 5💖、实际扣 2💖」。
+
+        校验会话归属 —— 没有这一条，知道 id 的人就能改别人的会话档位。
+        """
+        u = self.s.ensure_user()
+        try:
+            cid = int(body.get("chatroomId", 0))
+        except (TypeError, ValueError):
+            return err("chatroom not found")
+        mode = (body.get("chatMode") or "").strip()
+        if mode not in llm.CHAT_MODES:
+            return err("invalid chatMode")
+        row = self.s.c.execute(
+            "SELECT user_id FROM chatrooms WHERE id=?", (cid,)).fetchone()
+        if not row or row["user_id"] != u["id"]:
+            return err("chatroom not found")
+        self.s.set_chatroom_mode(cid, mode)
+        return ok({"chatroomId": cid, "chatMode": mode,
+                   "heartCost": llm.heart_cost(mode)})
+
     def message_list(self, chatroom_id: int) -> dict:
         return ok(self.s.list_messages(chatroom_id))
 
@@ -1055,25 +1079,61 @@ class API:
     def ugc_styles(self) -> dict:
         return ok(imagegen.list_styles())
 
+    # 哪个 reason 用哪份额度。
+    # 旧版 _charge 里写死 fq_type = "roleUgc"，导致头像（6 hearts）
+    # 和相册（21 hearts）共用同一份 3 次免费名额 ——
+    # 用户可以把本该 21 hearts 的相册图用头像额度白嫆 3 张。
+    # 没列在这里的 reason 不给免费额度，直接扣 hearts。
+    FREE_QUOTA_FOR = {
+        "ugc_text": "roleUgc",
+        "ugc_photo": "roleUgc",
+        # album_image 刻意不给免费额度：单价高（21），
+        # 且它是一次性消费型功能，不应该成为拉新手段。
+    }
+
     def _charge(self, u: dict, cost: int, reason: str):
-        """免费额度 → hearts 的两级策略（对齐 Vesperine 的 free → heart 链）。
-        返回 (ok, error_response)。
+        """免费额度 → hearts 的两级策略。返回 (ok, error_response)。
+
+        返回实际的 cost（0 表示走了免费额度），以及消耗的额度类型，
+        调用方在失败时可用它们回滚。
         """
-        fq_type = "roleUgc"
-        fq = self.s.c.execute(
-            "SELECT * FROM free_quota WHERE user_id=? AND type=?",
-            (u["id"], fq_type)).fetchone()
-        if fq and fq["count"] < fq["limit_"]:
-            self.s.c.execute(
-                "UPDATE free_quota SET count=count+1 WHERE user_id=? AND type=?",
-                (u["id"], fq_type))
-            self.s.c.commit()
-            return 0, None
+        fq_type = self.FREE_QUOTA_FOR.get(reason)
+        if fq_type:
+            fq = self.s.c.execute(
+                "SELECT * FROM free_quota WHERE user_id=? AND type=?",
+                (u["id"], fq_type)).fetchone()
+            if fq and fq["count"] < fq["limit_"]:
+                self.s.c.execute(
+                    "UPDATE free_quota SET count=count+1 WHERE user_id=? AND type=?",
+                    (u["id"], fq_type))
+                self.s.c.commit()
+                return 0, None
         info = self.s.heart_info(u["id"])
         if info["amount"] < cost:
             return cost, err("NOT_ENOUGH_HEARTS")
         self.s.add_hearts(u["id"], -cost, reason)
         return cost, None
+
+    def _refund_charge(self, u: dict, cost: int, reason: str,
+                       used_free_quota: bool) -> None:
+        """生成失败时回滚扣费。
+
+        同时回滚两样东西，缺一样用户就亏：
+          - hearts（cost > 0 时）
+          - 免费额度计数（cost == 0 说明这次是免费名额，也得退回去）
+        旧版只退 hearts，免费额度被吃掉 —— 实测连发 3 次失败的相册生成，
+        3 次额度全没，一张图也没拿到。
+        """
+        if cost:
+            self.s.add_hearts(u["id"], cost, reason + "_refund")
+            return
+        fq_type = self.FREE_QUOTA_FOR.get(reason)
+        if not fq_type or not used_free_quota:
+            return
+        self.s.c.execute(
+            "UPDATE free_quota SET count=MAX(0, count-1)"
+            " WHERE user_id=? AND type=?", (u["id"], fq_type))
+        self.s.c.commit()
 
     def ugc_generate(self, body: dict) -> dict:
         """头像生成：Text-to-Avatar / Photo-to-Avatar。"""
@@ -1104,10 +1164,11 @@ class API:
                                     aspect_ratio=body.get("aspectRatio", "1:1"),
                                     n=int(body.get("n", 1)))
         except Exception as ex:
-            # 生成失败退还 hearts（不赚用户失败的钱）
-            if cost:
-                self.s.add_hearts(u["id"], cost, "ugc_refund")
-            return err(f"生成失败: {ex}")
+            # 生成失败把 hearts 和免费额度都退回去 —— 不赚用户失败的钱，
+            # 也不能吃掉他一次免费名额（旧版只退 hearts，额度照扣）。
+            self._refund_charge(u, cost, "ugc_text" if not is_photo else "ugc_photo",
+                                used_free_quota=(cost == 0))
+            return err("图片生成失败，请稍后重试（heart 已退还）")
 
         paths = imagegen.save_images(res["images"], str(GENERATED_DIR),
                                      f"ugc{u['id']}-{int(time.time())}")
@@ -1142,9 +1203,9 @@ class API:
                                     aspect_ratio=body.get("aspectRatio", "1:1"),
                                     n=int(body.get("n", 1)))
         except Exception as ex:
-            if cost:
-                self.s.add_hearts(u["id"], cost, "album_refund")
-            return err(f"生成失败: {ex}")
+            self._refund_charge(u, cost, "album_image",
+                                used_free_quota=(cost == 0))
+            return err("图片生成失败，请稍后重试（heart 已退还）")
         paths = imagegen.save_images(res["images"], str(GENERATED_DIR),
                                      f"album{u['id']}-{int(time.time())}")
         ids = [self.s.add_album_item(u["id"], p, role_id=body.get("roleId"),
@@ -1870,6 +1931,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(api.user_settings_update(self._body()))
             if p == "/api/chatroom":
                 return self._json(api.chatroom_create(self._body()))
+            if p == "/api/chatroom/mode":
+                return self._json(api.chatroom_mode(self._body()))
             if p == "/api/ad/reward":
                 return self._json(api.ad_reward(self._body()))
             if p == "/api/memory/summarize":
@@ -2039,7 +2102,11 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 emit({"event": "token", "text": piece})
         except Exception as ex:
-            emit({"event": "error", "msg": str(ex)[:200]})
+            # 不把上游的原始异常文本发给客户端 —— 那些是英文技术信息
+            # （HTTP Error 500 / Connection reset），直接展示给用户毫无帮助，
+            # 反而像应用坏了。记在服务端日志，用户拿到友好的中文提示
+            # + 退款（见下面的 NO_OUTPUT 分支）。
+            print(f"⚠️  模型调用失败 cid={cid}: {type(ex).__name__}: {ex}", file=sys.stderr)
 
         if blocked:
             # 被拦下的那次调用上游已经花完了 token —— 不计入就是把
@@ -2052,10 +2119,16 @@ class Handler(BaseHTTPRequestHandler):
             if _usage:
                 store.record_usage(u["id"], cid, chatroom["chat_mode"],
                                    _usage, blocked=True)
+            # 退钱：用户没有拿到任何可用回复，不该为一次被拦截的生成付费。
+            # 上游成本是我们的，不是用户的。
+            if cost and not ad_funded:
+                store.add_hearts(u["id"], cost, "chat_refund_blocked")
             # 不落库：违规内容一旦进 messages 表，就从「过滤」变成了「持有」。
             emit({"event": "error", "code": "CONTENT_BLOCKED",
                   "msg": "该回复未通过内容安全检查，已中止。"})
-            emit({"event": "done", "length": 0, "blocked": True})
+            emit({"event": "done", "length": 0, "blocked": True,
+                  "refunded": cost if (cost and not ad_funded) else 0,
+                  "heartInfo": store.heart_info(u["id"])})
             return
 
         full = "".join(acc)
@@ -2064,8 +2137,20 @@ class Handler(BaseHTTPRequestHandler):
             mid = store.add_message(cid, "assistant", full)
         if _usage:
             store.record_usage(u["id"], cid, chatroom["chat_mode"], _usage)
+
+        # 一条内容都没产出（上游 500 / 连接中断 / 提前 closed）→ 退 hearts。
+        # 旧版本只发一句 error 事件就结束，用户付了钱、界面上留一条空回复，
+        # 刷新后连那条空回复也没了 —— 完全不知道发生了什么。
+        refunded = 0
+        if not full and cost and not ad_funded:
+            store.add_hearts(u["id"], cost, "chat_refund_empty")
+            refunded = cost
+            emit({"event": "error", "code": "NO_OUTPUT",
+                  "msg": "没有收到回复，hearts 已退还，请重试。"})
+
         # messageId 回传前端：AI 回复必须可在应用内举报（同一政策要求）
-        emit({"event": "done", "length": len(full), "messageId": mid})
+        emit({"event": "done", "length": len(full), "messageId": mid,
+              "refunded": refunded, "heartInfo": store.heart_info(u["id"])})
 
 
 def local_addresses(port: int) -> list[str]:

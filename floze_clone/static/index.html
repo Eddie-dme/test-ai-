@@ -1021,14 +1021,31 @@ async function send() {
   }
 
   state.sending = true; $('#send').disabled = true;
-  appendMsg('user', text);
+  // 记住这个气泡的引用：失败时要把它撤掉，否则用户会看到
+  // 一条实际不存在于服务端的消息留在聊天记录里（刷新后就没了）。
+  const userBubble = appendMsg('user', text);
   $('#input').value = '';
+
+  /* 发送失败时把现场恢复成「没发送过」：
+   *   - 撤掉乐观插入的用户气泡
+   *   - 把原文回填进输入框，用户不用重打
+   * 旧版本只清 AI 气泡：用户打了一长段话，被告知余额不足，
+   * 那段话就凭空消失了，刷新后也不存在（服务端根本没存）。
+   */
+  const rollback = (tip) => {
+    try { userBubble.remove(); } catch (e) {}
+    const inp = $('#input');
+    if (inp && !inp.value) inp.value = text;
+    if (tip) toast(tip);
+  };
 
   const bubble = appendMsg('ai', '');
   bubble.innerHTML = '<span class="spinner"></span>';
   let acc = '';
   let blocked = false;
   let msgId = null;
+  let streamErr = null;
+  let serverNote = '';
 
   try {
     const resp = await fetch(API_BASE + '/api/message/send', {
@@ -1037,8 +1054,14 @@ async function send() {
     });
     if (resp.headers.get('content-type')?.includes('application/json')) {
       const j = await resp.json();
-      bubble.textContent = '';
-      toast(j.msg === 'NOT_ENOUGH_HEARTS' ? '💖 Hearts 不足 —— 点左侧 Hearts 旁的「+」做任务领取' : ('发送失败：' + j.msg));
+      bubble.remove();
+      // 文案要适配窄屏：手机上侧栏是抽屉，左侧什么都没有。
+      // 旧版本在 4 处都写「点左侧 +」，手机用户按这句话找不到任何东西。
+      const hint = isNarrow()
+        ? '💖 Hearts 不足 —— 点左上角 ☰ → 「+」做任务领取'
+        : '💖 Hearts 不足 —— 点左侧 Hearts 旁的「+」做任务领取';
+      rollback(j.msg === 'NOT_ENOUGH_HEARTS' ? hint
+             : ('发送失败：' + (j.msg || '未知错误')));
       state.sending = false; $('#send').disabled = false; return;
     }
     const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = '';
@@ -1072,18 +1095,50 @@ async function send() {
             blocked = true;
             bubble.textContent = evt.msg || '该回复未通过内容安全检查，已中止。';
             bubble.classList.add('blocked');
+          } else if (evt.code === 'NO_OUTPUT') {
+            // 服务端已退款，具体提示由下面统一回填逻辑给出，
+            // 这里不弹 toast —— 两个提示同时出现会互相盖掉。
+            serverNote = evt.msg || '';
           } else {
-            toast('模型错误：' + evt.msg);
+            // 上游报错往往是英文技术信息（HTTP Error 500），
+            // 不直接展示给用户，只留在控制台供排查。
+            console.warn('[send] upstream error:', evt.msg);
+            serverNote = '';
           }
         } else if (evt.event === 'done') {
           if (evt.messageId) msgId = evt.messageId;
+          // 服务端退还了 hearts —— 立刻把余额刷回来，
+          // 不让用户盯着一个少了的数字自己去想。
+          if (evt.heartInfo && evt.heartInfo.amount !== undefined) {
+            $('#hearts').textContent = evt.heartInfo.amount;
+          }
         }
       }
     }
   } catch (e) {
-    toast('请求异常：' + e.message);
+    streamErr = e;
   }
-  if (!acc && !blocked) bubble.textContent = '（无输出）';
+
+  /* 完全没拿到内容时把现场恢复。
+   *
+   * 以前这里只写一句「（无输出）」然后继续往下走，结果是：
+   *   hearts 已扣、一条空回复留在界面上、用户不知道自己付了钱。
+   * 现在：
+   *   - 有错误信息（上游 500 / 网络断）→ 撤掉气泡、回填输入、提示重试
+   *   - 真的没任何内容且无错误 → 也撤掉，不把空壳留在会话里
+   * 被安全审核拦下（blocked）是例外：服务端会退 hearts，且用户
+   * 需要看到「为什么被拦」，所以保留气泡。
+   */
+  if (!acc && !blocked) {
+    bubble.remove();
+    rollback(serverNote
+      || (streamErr ? '发送失败，hearts 已退还，请稍后重试'
+                    : '没有收到回复，hearts 已退还，请重试'));
+    state.sending = false; $('#send').disabled = false;
+    refreshWallet();
+    return;
+  }
+
   state.sending = false; $('#send').disabled = false;
   // 流式刚生成的这条消息需要拿 messageId 才能朗读 / 举报
   if (acc && !blocked && state.chatroom) {
@@ -2210,7 +2265,42 @@ window.addEventListener('resize', () => {
 });
 
 $('#send').onclick = send;
-$('#modeSel').onchange = updateCost;
+
+/* 切换档位必须真的生效。
+ *
+ * 服务端按 chatrooms.chat_mode 计费（prepare_send 读数据库），
+ * 所以只改下拉框文案会出现「显示 5💖 实扣 2💖」。
+ * 这里在变更时把档位写回会话；接口失败则把下拉框改回去，
+ * 不留下一个「看起来生效了但实际没生效」的状态。
+ */
+$('#modeSel').onchange = async () => {
+  updateCost();
+  if (!state.chatroom) return;              // 还没进会话，建会话时会带上
+  const want = $('#modeSel').value;
+  const prev = state.chatroom.chat_mode;
+  if (want === prev) return;
+
+  $('#modeSel').disabled = true;
+  try {
+    const r = await api('/api/chatroom/mode', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ chatroomId: state.chatroom.id, chatMode: want })
+    });
+    if (r.flag === 0) {
+      state.chatroom.chat_mode = want;
+    } else {
+      toast('切换档位失败：' + (r.msg || '未知错误'));
+      $('#modeSel').value = prev;
+      updateCost();
+    }
+  } catch (e) {
+    toast('切换档位失败，请重试');
+    $('#modeSel').value = prev;
+    updateCost();
+  } finally {
+    $('#modeSel').disabled = false;
+  }
+};
 $('#input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });
