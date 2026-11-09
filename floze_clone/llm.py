@@ -70,29 +70,35 @@ CHAT_MODES = {
     "lite":    {"model": MAIN_MODEL, "temperature": 0.85, "max_tokens": 220,
                 "style": ("Reply with ONE short sentence (under 35 words). "
                           "No scene description, just dialogue or a single small gesture."),
+                "label": "Short", "description": "One line of dialogue. Fast and cheap.",
                 "heart_cost": 1},
     "quick":   {"model": MAIN_MODEL, "temperature": 0.90, "max_tokens": 320,
                 "style": ("Reply briefly — 1 short paragraph, under 70 words. "
                           "Like instant messaging: natural and tight."),
+                "label": "Chat", "description": "A short paragraph, like texting.",
                 "heart_cost": 1},
     "classic": {"model": MAIN_MODEL, "temperature": 1.00, "max_tokens": 600,
                 "style": ("Reply with 1-2 paragraphs (~400-700 characters total). "
                           "Balanced: some atmosphere, one or two actions, then dialogue."),
+                "label": "Classic", "description": "Two paragraphs with atmosphere and dialogue.",
                 "heart_cost": 2},
     "smooth":  {"model": MAIN_MODEL, "temperature": 0.95, "max_tokens": 800,
                 "style": ("Write in a romantic, novel-like tone. 2-3 paragraphs "
                           "(~700-1000 characters). Prioritise emotional texture "
                           "over plot advancement."),
+                "label": "Romance", "description": "Novel-like prose, focused on feeling.",
                 "heart_cost": 3},
     "story":   {"model": MAIN_MODEL, "temperature": 0.95, "max_tokens": 900,
                 "style": ("Advance the plot actively. 2-3 paragraphs (~700-1000 characters). "
                           "Introduce a new development, a discovery, or a complication."),
+                "label": "Story", "description": "Moves the plot forward with a new turn.",
                 "heart_cost": 3},
     "epic":    {"model": MAIN_MODEL, "temperature": 0.98, "max_tokens": 1800,
                 "style": ("Write long, richly detailed, immersive prose — at least "
                           "4 paragraphs and over 1200 characters. Use multiple beats: "
                           "environment, physical action, interiority, and dialogue. "
                           "This is the premium tier; give the reader something worth paying for."),
+                "label": "Epic", "description": "Long, immersive prose. Four paragraphs or more.",
                 "heart_cost": 5},
 }
 
@@ -249,22 +255,34 @@ def build_messages(role: dict, persona: dict, memory: str,
                    f"{role['status_bar']}")
     system += f"\n\nStyle: {cfg['style']}\n{BASE_SYSTEM}"
 
-    pname = persona.get("persona_name") if persona else ""
+    pname = (persona.get("persona_name") or "").strip() if persona else ""
+    pdesc = (persona.get("persona_desc") or "").strip() if persona else ""
+
+    # 名字与描述必须各自独立判断。
+    # 之前两者被同一个 `if pname:` 包住，导致用户只填了「描述」时整段被丢弃——
+    # 而描述里往往写着最重要的人物信息（年龄、身份、与角色的关系）。
+    if pname and pdesc:
+        roster = f"The user is {pname}. {pdesc}"
+    elif pname:
+        roster = f"The user is {pname}."
+    elif pdesc:
+        roster = (f"About the user (their name is not established yet — "
+                  f"do not invent one): {pdesc}")
+    else:
+        roster = ""
 
     if native:
         if memory:
             system += f"\n\n{memory}"
         msgs.append({"role": "system", "name": role["name"], "content": system})
         # user_system 必须带 name（实测：不带则 400/2013）
-        if pname:
-            msgs.append({"role": "user_system", "name": pname,
-                         "content": f"The user is {pname}. "
-                                    f"{persona.get('persona_desc','')}"})
+        if roster:
+            msgs.append({"role": "user_system", "name": pname or "User",
+                         "content": roster})
     else:
         # —— 降级路径：M2.7 / M3 不支持专有 role，全部并入 system ——
-        if pname:
-            system += (f"\n\nThe user is {pname}. "
-                       f"{persona.get('persona_desc','')}")
+        if roster:
+            system += f"\n\n{roster}"
         for ex_user, ex_ai in STYLE_EXAMPLES.get(chat_mode,
                                                  STYLE_EXAMPLES["classic"]):
             system += (f"\n\nExample exchange —\nUser: {ex_user}\n"

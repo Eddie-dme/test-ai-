@@ -323,7 +323,12 @@ class API:
     def chat_modes(self) -> dict:
         items = []
         for mid, cfg in llm.CHAT_MODES.items():
-            items.append({"id": mid, "model": cfg["model"],
+            # 不返回 model —— 它是实现细节，用户不需要知道我们后端接的哪家模型。
+            # 返回 label/description 让档位差异可感知：只给 "classic · 2💖" 时
+            # 用户无法判断多花 4 个 hearts 买到什么。
+            items.append({"id": mid,
+                          "label": cfg.get("label", mid),
+                          "description": cfg.get("description", ""),
                           "temperature": cfg["temperature"],
                           "maxTokens": cfg["max_tokens"],
                           "heartCost": cfg["heart_cost"],
@@ -336,13 +341,33 @@ class API:
         return ok(self.s.list_chatrooms(u["id"]))
 
     def chatroom_create(self, body: dict) -> dict:
+        """开启/继续与某个角色的对话。
+
+        **同一角色只有一个会话**。用户点「开始对话」的意思是「继续聊」，
+        不是「再开一个聊天窗口」—— 旧版本每次点击都 INSERT 一条，
+        结果同一角色会出现多条会话和重复的开场白。
+
+        如果复用上了已有会话但档位不同，把档位写回数据库：
+        prepare_send 读的是 chatrooms.chat_mode，只改前端显示会让
+        「显示 5💖 实扣 2💖」。
+        """
         u = self.s.ensure_user()
         role_id = int(body.get("roleId", 0))
         if not self.s.get_role(role_id):
             return err("role not found")
         mode = body.get("chatMode", "classic")
+        if mode not in llm.CHAT_MODES:
+            mode = "classic"
+
+        existing = self.s.find_chatroom(u["id"], role_id)
+        if existing:
+            if existing["chat_mode"] != mode:
+                self.s.set_chatroom_mode(existing["id"], mode)
+            return ok({"id": existing["id"], "roleId": role_id,
+                       "chatMode": mode, "model": existing.get("model", "standard"),
+                       "resumed": True})
         return ok(self.s.create_chatroom(u["id"], role_id, mode,
-                                         body.get("model", "standard")))
+                                        body.get("model", "standard")))
 
     def message_list(self, chatroom_id: int) -> dict:
         return ok(self.s.list_messages(chatroom_id))
@@ -1569,6 +1594,58 @@ class Handler(BaseHTTPRequestHandler):
         counts = store.delete_user(uid)
         return ok({"deleted": counts})
 
+    # ---------- 找回密码
+    def _reset_base_url(self) -> str:
+        """重置链接的前缀。
+
+        优先用显式配置的 PUBLIC_BASE_URL —— 服务在反向代理后面，
+        从 Host 头推断会被代理改写成内部域名，导致邮件里的链接打不开。
+        未配置时兜底用 api.lurvy.top（当前唯一部署环境）。
+        """
+        return (os.environ.get("PUBLIC_BASE_URL", "").strip()
+                or "https://api.lurvy.top").rstrip("/")
+
+    def _forgot_password(self, body: dict) -> dict:
+        """发送重置邮件。
+
+        **无论邮箱是否存在都返回同样的成功响应。**
+        否则这个端点就成了一个「该邮箱有没有注册过」的枚举器 ——
+        对情感陪伴类产品，知道某人在用这个 App 本身就是隐私。
+        """
+        email = auth.normalize_email(body.get("email", ""))
+        if not auth.looks_like_email(email):
+            return err("INVALID_EMAIL")
+
+        store = Store(connect(init_schema=False))
+        user = store.user_by_email(email)
+        if user:
+            token = store.create_password_reset(user["id"], ttl_seconds=3600)
+            link = f"{self._reset_base_url()}/?reset={token}"
+            status = mailer.send_password_reset(email, link, minutes=60)
+            if status != "sent":
+                # 发不出去不能装作发了 —— 用户会一直等一封永远不会来的邮件。
+                # 但这属于运维问题，日志里记清楚，客户端仍返回中性文案。
+                print(f"  ⚠️  重置邮件未送达 ({status}): user={user['id']}")
+        return ok({"sent": True})
+
+    def _reset_password(self, body: dict) -> dict:
+        """用重置令牌设置新密码。
+
+        成功后吊销全部令牌：重置密码的常见场景就是「号可能被别人用了」。
+        """
+        token = (body.get("token") or "").strip()
+        newpw = body.get("newPassword") or ""
+        if len(newpw) < 8 or len(newpw) > 200:
+            return err("WEAK_PASSWORD")
+        store = Store(connect(init_schema=False))
+        uid = store.consume_password_reset(token)
+        if not uid:
+            # 过期 / 已用 / 伪造 统一同一个错误，不区分
+            return err("INVALID_RESET_TOKEN")
+        store.set_password(uid, auth.hash_password(newpw))
+        store.revoke_all_tokens(uid)
+        return ok(None)
+
     def _logout(self) -> dict:
         token = self._bearer_token()
         if token:
@@ -1784,6 +1861,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._delete_account())
             if p == "/api/auth/password":
                 return self._json(self._change_password(self._body()))
+            # 找回密码：两个端点都必须在未登录时可用
+            if p == "/api/auth/forgot":
+                return self._json(self._forgot_password(self._body()))
+            if p == "/api/auth/reset":
+                return self._json(self._reset_password(self._body()))
             if p == "/api/user/settings":
                 return self._json(api.user_settings_update(self._body()))
             if p == "/api/chatroom":

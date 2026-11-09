@@ -40,9 +40,19 @@ LEAD_FROM_NAME = os.environ.get("LEAD_FROM_NAME", "lurvy.top 官网")
 TIMEOUT = 12   # 秒。SMTP 卡住时不能把 HTTP 请求一起拖死
 
 
+def smtp_ready() -> bool:
+    """SMTP 凭据是否齐全（能发任意邮件）。
+
+    与 enabled() 分开：LEAD_TO 只是官网线索的收件人，
+    密码重置邮件不需要它 —— 否则线上忘配 LEAD_TO 就会导致
+    「找回密码」在明明配好了 SMTP 的情况下静默失效。
+    """
+    return bool(SMTP_HOST and SMTP_USER and SMTP_PASS)
+
+
 def enabled() -> bool:
-    """SMTP 是否配置完整。"""
-    return bool(SMTP_HOST and SMTP_USER and SMTP_PASS and LEAD_TO)
+    """官网线索通知是否可用（需要 SMTP 凭据 + 收件人）。"""
+    return bool(smtp_ready() and LEAD_TO)
 
 
 def _build_lead_message(lead: dict) -> EmailMessage:
@@ -81,18 +91,14 @@ def _build_lead_message(lead: dict) -> EmailMessage:
     return msg
 
 
-def send_lead(lead: dict) -> str:
-    """发送一条线索通知。
+def _deliver(msg: EmailMessage) -> str:
+    """实际投递一封邮件，返回 sent / skipped / failed。
 
-    返回 mail_status 字符串：
-      sent    —— 发送成功
-      skipped —— 未配置 SMTP（不算失败）
-      failed  —— 配置了但发送失败（线索仍已落库）
+    lead 通知与密码重置共用这一段 —— 两处各写一遍 SMTP 逻辑，
+    迟早会有一处漏掉 STARTTLS 或超时设置。
     """
-    if not enabled():
+    if not smtp_ready():
         return "skipped"
-
-    msg = _build_lead_message(lead)
     try:
         if SMTP_PORT == 465:
             ctx = ssl.create_default_context()
@@ -107,10 +113,52 @@ def send_lead(lead: dict) -> str:
                 s.send_message(msg)
         return "sent"
     except Exception as e:
-        # 不抛出去 —— 调用方需要继续返回成功响应给用户，
-        # 线索已经落库，运维可以从库里捞。
-        print(f"  ⚠️  线索邮件发送失败 lead={lead.get('id')}: {e}")
+        # 不抛出去 —— 调用方需要继续返回成功响应给用户。
+        print(f"  ⚠️  邮件发送失败: {e}")
         return "failed"
+
+
+def send_lead(lead: dict) -> str:
+    """发送一条线索通知。返回 sent / skipped / failed。"""
+    if not enabled():
+        return "skipped"
+    return _deliver(_build_lead_message(lead))
+
+
+RESET_FROM_NAME = os.environ.get("RESET_FROM_NAME", "Vesperine")
+
+
+def _build_reset_message(to_email: str, link: str, minutes: int) -> EmailMessage:
+    """密码重置邮件。
+
+    刻意不透露「这个邮箱有没有注册过」以外的信息，也不带用户昵称 ——
+    重置邮件有可能进错邮箱（用户打错字），里面不该出现任何可用信息。
+    """
+    msg = EmailMessage()
+    msg["Subject"] = "Reset your Vesperine password"
+    msg["From"] = formataddr((RESET_FROM_NAME, SMTP_USER))
+    msg["To"] = to_email
+    msg["Date"] = formatdate(localtime=True)
+    msg.set_content(
+        "Someone asked to reset the password for this Vesperine account.\n\n"
+        f"Open this link to choose a new password (valid for {minutes} minutes):\n\n"
+        f"{link}\n\n"
+        "The link can only be used once.\n\n"
+        "If this was not you, you can ignore this email -- your password\n"
+        "will not change.\n"
+    )
+    return msg
+
+
+def send_password_reset(to_email: str, link: str, minutes: int = 60) -> str:
+    """发送重置邮件。返回 sent / skipped / failed。
+
+    注意：调用方**不应**把返回值直接告诉客户端 —— 那会变成
+    「这个邮箱存在吗」的探测接口。调用方统一回「如果该邮箱已注册，我们发了邮件」。
+    """
+    if not smtp_ready():
+        return "skipped"
+    return _deliver(_build_reset_message(to_email, link, minutes))
 
 
 if __name__ == "__main__":

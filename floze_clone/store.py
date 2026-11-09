@@ -17,6 +17,7 @@ Vesperine 复刻 —— 数据层
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import sys
@@ -60,6 +61,20 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
     last_used_at    REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id);
+
+-- 密码重置令牌。
+--
+-- 只存 sha256(token)，**不存明文**：邮件里那个链接一旦被看到就已经生效了，
+-- 而数据库泄露是另一种情况 —— 存明文的话，拿到库就能直接重置任意账号密码。
+-- 存 hash 后，泄露的库里没有任何可用的重置凭证。
+CREATE TABLE IF NOT EXISTS password_resets (
+    token_hash      TEXT PRIMARY KEY,
+    user_id         INTEGER NOT NULL,
+    created_at      REAL NOT NULL,
+    expires_at      REAL NOT NULL,
+    used_at         REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
 
 CREATE TABLE IF NOT EXISTS roles (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -669,6 +684,56 @@ class Store:
         self.c.execute("DELETE FROM auth_tokens WHERE token=?", (token,))
         self.c.commit()
 
+    # ---- 密码重置 ---------------------------------------------------
+    @staticmethod
+    def _reset_hash(token: str) -> str:
+        """重置令牌的存储形式。发出去的是明文，库里只有这个。"""
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    def create_password_reset(self, user_id: int, ttl_seconds: int = 3600) -> str:
+        """生成一次性重置令牌，返回明文（只在这一刻存在于内存/邮件里）。
+
+        先作废该用户之前未用的令牌：用户点了两次「发邮件」时，
+        只有最新的那封能用，不至于邮件箱里每一封都是有效凭证。
+        """
+        self.c.execute(
+            "DELETE FROM password_resets WHERE user_id=? AND used_at=0",
+            (user_id,))
+        token = auth.new_token()
+        t = now()
+        self.c.execute(
+            "INSERT INTO password_resets (token_hash, user_id, created_at, expires_at,"
+            " used_at) VALUES (?,?,?,?,0)",
+            (self._reset_hash(token), user_id, t, t + ttl_seconds))
+        self.c.commit()
+        return token
+
+    def consume_password_reset(self, token: str) -> int | None:
+        """校验并**一次性**消费重置令牌，返回 user_id。
+
+        标记已用与返回必须原子：先标 used_at，用 rowcount 判断自己是不是
+        第一个，再返回 user_id。否则同一个链接并发点两下会重置两次。
+        """
+        if not token:
+            return None
+        h = self._reset_hash(token)
+        row = self.c.execute(
+            "SELECT user_id, expires_at, used_at FROM password_resets"
+            " WHERE token_hash=?", (h,)).fetchone()
+        if not row or row["used_at"] or row["expires_at"] < now():
+            return None
+        cur = self.c.execute(
+            "UPDATE password_resets SET used_at=? WHERE token_hash=? AND used_at=0",
+            (now(), h))
+        won = cur.rowcount == 1
+        self.c.commit()
+        return row["user_id"] if won else None
+
+    def set_password(self, user_id: int, password_hash: str) -> None:
+        self.c.execute("UPDATE users SET password_hash=? WHERE id=?",
+                       (password_hash, user_id))
+        self.c.commit()
+
     # 删除账号时要清空的表。顺序无关（都是按 user_id 平铺删除），
     # 但 messages 例外 —— 它没有 user_id，得靠 chatroom 间接定位。
     _USER_SCOPED_TABLES = (
@@ -677,7 +742,7 @@ class Store:
         "role_affinity", "chapter_unlocks", "affinity_log", "scenario_likes",
         "creators", "creator_blocks", "follow_reads", "album_items",
         "user_quests", "user_achievements", "notifications", "user_stickers",
-        "moderation_events", "iap_purchases", "llm_usage",
+        "moderation_events", "iap_purchases", "llm_usage", "password_resets",
     )
 
     def delete_user(self, user_id: int) -> dict:
@@ -842,6 +907,29 @@ class Store:
                 " VALUES (?,?,?,?)", (cid, "assistant", role["first_message"], ts))
         self.c.commit()
         return {"id": cid, "roleId": role_id, "chatMode": chat_mode, "model": model}
+
+    def find_chatroom(self, user_id: int, role_id: int) -> dict | None:
+        """同一用户 + 同一角色最近一次会话。
+
+        用于「点开始对话 = 继续聊」而不是「再开一个窗口」。
+        按 updated_at 倒序取最新的一条：即使历史数据里已经有重复会话
+        （旧版本每次点击都新建），也总是进入用户最近在用的那一个。
+        """
+        row = self.c.execute(
+            "SELECT * FROM chatrooms WHERE user_id=? AND role_id=?"
+            " ORDER BY updated_at DESC, id DESC LIMIT 1",
+            (user_id, role_id)).fetchone()
+        return dict(row) if row else None
+
+    def set_chatroom_mode(self, cid: int, chat_mode: str) -> None:
+        """切换会话档位。
+
+        档位决定实际计费（prepare_send 读 chatrooms.chat_mode），
+        所以这里必须真的落库 —— 只改前端显示就是「显示 5 扣 2」。
+        """
+        self.c.execute("UPDATE chatrooms SET chat_mode=?, updated_at=? WHERE id=?",
+                       (chat_mode, now(), cid))
+        self.c.commit()
 
     def touch_chatroom(self, cid: int) -> None:
         self.c.execute("UPDATE chatrooms SET updated_at=? WHERE id=?", (now(), cid))

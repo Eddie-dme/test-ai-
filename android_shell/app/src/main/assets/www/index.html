@@ -342,6 +342,31 @@
         color:var(--dim);font:inherit;font-size:12.5px;cursor:pointer;
         text-decoration:underline;text-underline-offset:3px}
   .authlink:hover{color:var(--ink)}
+  .authforgot{display:block;width:100%;margin-top:6px;background:none;border:none;
+        color:var(--muted-2);font:inherit;font-size:11.5px;cursor:pointer;
+        text-align:center;text-decoration:underline;text-underline-offset:3px}
+  .authforgot:hover{color:var(--ink)}
+
+  /* ---- 新手引导 ---- */
+  .onbgate{position:fixed;inset:0;z-index:260;display:flex;
+        align-items:center;justify-content:center;padding:22px;
+        background:radial-gradient(120% 70% at 50% 0%,#2c2350 0%,#14102a 40%,#0d0b14 70%)}
+  .onbcard{width:100%;max-width:400px;background:var(--panel);
+        border:1px solid var(--line);border-radius:16px;padding:24px 22px 20px;
+        box-shadow:0 30px 80px rgba(0,0,0,.6);max-height:88vh;overflow-y:auto}
+  .onbstep{text-align:center}
+  .onbstep h2{margin:0 0 8px;font-size:19px;font-weight:600;color:var(--ink)}
+  .onbstep p{margin:0 0 14px;font-size:13px;line-height:1.65;color:var(--dim)}
+  .onbicon{font-size:34px;line-height:1;margin-bottom:12px}
+  .onbrow{display:flex;gap:10px;align-items:flex-start;text-align:left;
+        background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+        padding:11px 13px;margin-bottom:8px}
+  .onbrow b{display:block;font-size:12.5px;color:var(--ink);margin-bottom:3px}
+  .onbrow span{font-size:11.5px;line-height:1.55;color:var(--dim)}
+  .onbdots{display:flex;gap:6px;justify-content:center;margin:14px 0 0}
+  .onbdots i{width:6px;height:6px;border-radius:50%;background:var(--line);
+        transition:background .2s}
+  .onbdots i.on{background:var(--rose)}
 
   /* ---- 矮视口（手机横屏）：侧栏整栏可滚动 ----
      横屏时逻辑宽度 >820px，侧栏是常驻的；但视口高度只剩 400 上下，
@@ -372,6 +397,19 @@
     <label class="authlabel" for="authPass">Password</label>
     <input id="authPass" class="authinput" type="password"
            autocomplete="current-password" placeholder="At least 8 characters">
+
+    <!-- 仅注册时显示。这两个字段直接决定角色怎么称呼你 ——
+         personaName 会进入 prompt 的「The user is …」，
+         空着的话模型只能泛用 "you" 或自己编一个名字。 -->
+    <div id="regExtra" style="display:none">
+      <label class="authlabel" for="authName">Your name</label>
+      <input id="authName" class="authinput" type="text" autocomplete="nickname"
+             maxlength="40" placeholder="How we greet you in the app">
+      <label class="authlabel" for="authPersona">What should characters call you?</label>
+      <input id="authPersona" class="authinput" type="text" autocomplete="off"
+             maxlength="40" placeholder="Leave blank to stay unnamed">
+    </div>
+
     <label class="authtos" id="tosRow" style="display:none">
       <input type="checkbox" id="authTos">
       <span>I agree to the
@@ -383,6 +421,20 @@
     </label>
     <button id="authSubmit" class="authbtn">Sign in</button>
     <button id="authSwitch" class="authlink">Create a new account</button>
+    <button id="authForgot" class="authforgot" type="button">Forgot your password?</button>
+  </div>
+</div>
+
+<!-- 新手引导。注册成功且从未看过时显示。
+     为什么需要：新用户直接落到角色列表，没人告诉他 hearts 怎么用、
+     30 个 hearts 能用多久、用完了去哪领 —— 而余额耗尽的时点
+     恰好是决定“留下还是卸载”的那一分钟。 -->
+<div id="onbGate" class="onbgate" style="display:none">
+  <div class="onbcard">
+    <div id="onbBody"></div>
+    <div class="onbdots" id="onbDots"></div>
+    <button id="onbNext" class="authbtn">Continue</button>
+    <button id="onbSkip" class="authforgot" type="button">Skip</button>
   </div>
 </div>
 
@@ -849,20 +901,31 @@ function exitOverlay() {
 /* ---------- 开始 / 打开会话 ---------- */
 async function startChat(role) {
   const mode = $('#modeSel').value || 'classic';
+  // 服务端保证同一角色只有一个会话（已存在就复用），所以这里
+  // 不用先查再决定 —— 交给后端做才能避免并发点两下开出两个会话。
   const res = await api('/api/chatroom', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ roleId: role.id, chatMode: mode })
   });
   if (res.flag !== 0) return toast('创建会话失败：' + res.msg);
   state.role = role;
-  state.chatroom = { id: res.data.id, chat_mode: mode, role_id: role.id };
+  state.chatroom = { id: res.data.id, chat_mode: res.data.chatMode || mode,
+                     role_id: role.id };
   $('#who').textContent = role.name;
   $('#sub').textContent = role.personality || '';
   setHero(role.name);
+  $('#modeSel').value = state.chatroom.chat_mode;
+  updateCost();
   await refreshRooms();
   await loadMessages();
   await refreshAffinity();
-  state.tab = 'rooms'; switchTab('rooms');
+  // 先 switchTab('rooms') 同步侧栏 tab 高亮与 state.tab，
+  // 再 exitOverlay() 把窄屏从列表视图切回聊天视图 —— 顺序不能反：
+  // switchTab('rooms') 在窄屏下会把 #chat 设为 display:none，
+  // 那样用户点「开始对话」后看到的是自己刚建的会话卡片，
+  // 必须再点一次才能看到角色开口（开场白其实已经加载好了）。
+  switchTab('rooms');
+  exitOverlay();
 }
 
 function setHero(roleName) {
@@ -2042,7 +2105,11 @@ async function refreshWallet() {
 }
 function updateCost() {
   const m = currentMode();
-  $('#cost').textContent = m ? `本次消耗：${m.heartCost} 💖（${m.id} → ${m.model}）` : '本次消耗：–';
+  // 不展示后端模型名 —— 用户不需要知道我们接的是哪家模型，
+  // 而且它会在竞品调研时把技术栈白送出去。只显示档位与消耗。
+  $('#cost').textContent = m
+    ? `本次消耗：${m.heartCost} 💖（${m.label || m.id}）`
+    : '本次消耗：–';
 }
 
 $('#btnEarn').onclick = () => openQuests();
@@ -2159,7 +2226,11 @@ function authErrorText(msg) {
     INVALID_CREDENTIALS: 'Email or password is incorrect.',
     TERMS_NOT_ACCEPTED: 'Please agree to the Terms and Privacy Policy.',
     UNAUTHORIZED: 'Your session expired. Please sign in again.',
-    RATE_LIMITED: 'Too many attempts. Please wait a minute and retry.'
+    RATE_LIMITED: 'Too many attempts. Please wait a minute and retry.',
+    // 过期 / 已用 / 伪造 三种情况服务端故意不区分，这里也不区分 ——
+    // 区分了就等于告诉攻击者「这个令牌曾经存在过」。
+    INVALID_RESET_TOKEN: 'This reset link is invalid or has expired. '
+                       + 'Request a new one.',
   })[msg] || ('Something went wrong: ' + msg);
 }
 
@@ -2168,15 +2239,199 @@ function showAuthGate(msg, ok) {
   const el = $('#authMsg');
   el.textContent = msg || '';
   el.className = 'authmsg' + (ok ? ' ok' : '');
-  $('#authSubmit').disabled = false;
-  $('#authSubmit').textContent = authMode === 'login' ? 'Sign in' : 'Create account';
-  $('#authSwitch').textContent = authMode === 'login'
-    ? 'Create a new account' : 'I already have an account';
-  // 条款勾选只在注册时出现 —— 登录不需要重新同意
-  $('#tosRow').style.display = (authMode === 'register') ? 'flex' : 'none';
+  const btn = $('#authSubmit');
+  btn.disabled = false;
+
+  // 四种模式共用同一个表单容器，按需显隐字段。
+  // 另建两套 DOM 会多出两份样式与两处校验，容易逐渐跑偏。
+  const isReset = authMode === 'reset';
+  const isForgot = authMode === 'forgot';
+  const isRegister = authMode === 'register';
+  const isLogin = authMode === 'login';
+
+  // email 行：重置密码时隐藏（令牌已经确定身份）
+  $('#authEmail').style.display = isReset ? 'none' : '';
+  $('label[for="authEmail"]').style.display = isReset ? 'none' : '';
+  // 密码行：忘记密码时隐藏（这一步只要邮箱）
+  $('#authPass').style.display = isForgot ? 'none' : '';
+  $('label[for="authPass"]').style.display = isForgot ? 'none' : '';
+
+  btn.textContent = isReset ? 'Set new password'
+                  : isForgot ? 'Send reset link'
+                  : isRegister ? 'Create account' : 'Sign in';
+
+  // 重置模式下也要留一条出口：令牌过期时用户得能回去重新申请。
+  // 之前这里设成 none，结果用户只看到「链接无效」却无路可走。
+  $('#authSwitch').style.display = '';
+  $('#authSwitch').textContent = isReset
+    ? 'Back to sign in'
+    : (isLogin ? 'Create a new account' : 'I already have an account');
+  $('#authForgot').style.display = isLogin ? '' : 'none';
+
+  // 条款勾选与昵称/称呼只在注册时出现 —— 登录不需要重新同意，
+  // 也不该让登录表单多出两个无关输入框。
+  $('#tosRow').style.display = isRegister ? 'flex' : 'none';
+  $('#regExtra').style.display = isRegister ? 'block' : 'none';
+
+  // 密码标签在重置模式下语义变了，不能还写 "Password"。
+  $('label[for="authPass"]').textContent = isReset ? 'New password' : 'Password';
+  $('#authPass').placeholder = isReset ? 'At least 8 characters'
+                                       : 'At least 8 characters';
+  // 密码管理器需要区分"登录"与"注册"，否则注册时不会建议一个强密码
+  $('#authPass').setAttribute('autocomplete',
+    (isRegister || isReset) ? 'new-password' : 'current-password');
 }
 
 function hideAuthGate() { $('#authGate').style.display = 'none'; }
+
+/* ---------- 新手引导 ----------
+ * 三个页面，只在新账号首次进入时出现一次。
+ *
+ * 为什么不只是在角色列表上盖个提示：新用户真正需要建立的是
+ * **对货币体系的预期** —— 30 hearts 能用多久、花完了去哪领。
+ * 不知道这两件事的用户会在余额归零那一刻直接卸载。
+ */
+const ONB_KEY = 'vesperine_onboarded_v1';
+
+function onbSeen() {
+  try { return localStorage.getItem(ONB_KEY) === '1'; } catch (e) { return false; }
+}
+function onbMarkSeen() {
+  try { localStorage.setItem(ONB_KEY, '1'); } catch (e) {}
+}
+
+function showOnboarding() {
+  const gate = $('#onbGate');
+  const body = $('#onbBody');
+  const dots = $('#onbDots');
+  const next = $('#onbNext');
+  const u = state.user || {};
+  let step = 0;
+
+  // 用户名字：注册时填过就预填，没填就让他在这一步定下来。
+  // 这个名字会进 prompt 的“The user is …”，角色从此能叫出他的名字。
+  let personaInput = '';
+
+  const steps = [
+    {
+      icon: '✒',
+      title: 'Welcome to Vesperine',
+      html: () => '<div class="onbstep">'
+        + '<div class="onbicon">✒</div>'
+        + '<h2>Stories that answer back</h2>'
+        + '<p>Six characters are waiting — vampires, knights, sorcerers. '
+        + 'Pick one, and the story starts wherever you take it.</p>'
+        + '<label class="authlabel" for="onbPersona" style="text-align:left">'
+        + 'What should they call you?</label>'
+        + '<input id="onbPersona" class="authinput" maxlength="40" '
+        + 'placeholder="Your name in the story" value="'
+        + esc(u.personaName || '') + '">'
+        + '<p style="margin:10px 0 0;font-size:11.5px;">'
+        + 'Optional — but they remember it.</p>'
+        + '</div>'
+    },
+    {
+      icon: '💖',
+      title: 'Hearts',
+      html: () => '<div class="onbstep">'
+        + '<div class="onbicon">💖</div>'
+        + '<h2>Every reply costs hearts</h2>'
+        + '<p>You start with <b>' + (u.hearts || 30) + ' hearts</b> — '
+        + 'roughly 15 replies on Classic. Longer tiers cost more '
+        + 'and give more.</p>'
+        + '<div class="onbrow"><div><b>Daily check-in</b>'
+        + '<span>+10 hearts, free, once a day. Tap the ＋ next to your balance.</span>'
+        + '</div></div>'
+        + '<div class="onbrow"><div><b>Quests</b>'
+        + '<span>Chat, post, comment — each pays hearts the first time.</span>'
+        + '</div></div>'
+        + '<div class="onbrow"><div><b>Top up</b>'
+        + '<span>Buy hearts anytime from the same panel.</span>'
+        + '</div></div>'
+        + '</div>'
+    },
+    {
+      icon: '🎭',
+      title: 'Start',
+      html: () => '<div class="onbstep">'
+        + '<div class="onbicon">🎭</div>'
+        + '<h2>One conversation per character</h2>'
+        + '<p>Each character keeps a single ongoing story. Come back '
+        + 'anytime and pick up exactly where you left off — nothing '
+        + 'is lost.</p>'
+        + '<p style="color:var(--gold)">Pick a character to begin.</p>'
+        + '</div>'
+    }
+  ];
+
+  const render = () => {
+    // 离开第一页前把名字记下来，后面保存只提交一次
+    if (step === 1) {
+      const el = $('#onbPersona');
+      if (el) personaInput = el.value.trim();
+    }
+    body.innerHTML = steps[step].html();
+    dots.innerHTML = steps.map((_, i) =>
+      '<i class="' + (i === step ? 'on' : '') + '"></i>').join('');
+    next.textContent = step === steps.length - 1 ? 'Start reading' : 'Continue';
+    const el = $('#onbPersona');
+    if (el) {
+      el.focus();
+      el.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter') { ev.preventDefault(); advance(); }
+      });
+    }
+  };
+
+  const finish = async () => {
+    const name = (personaInput || '').trim();
+    gate.style.display = 'none';
+    onbMarkSeen();
+    if (name && name !== (u.personaName || '')) {
+      try {
+        const r = await api('/api/user/settings', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ personaName: name })
+        });
+        if (r.flag === 0 && r.data) {
+          state.user = Object.assign({}, state.user, {
+            personaName: r.data.personaName || name,
+            personaDesc: r.data.personaDesc || ''
+          });
+        }
+      } catch (e) { /* 保存失败不阻塞进入应用，侧栏还能改 */ }
+    }
+    refreshWallet();
+  };
+
+  const advance = () => {
+    if (step === 0) {
+      const el = $('#onbPersona');
+      if (el) personaInput = el.value.trim();
+    }
+    if (step < steps.length - 1) { step++; render(); }
+    else finish();
+  };
+
+  next.onclick = advance;
+  $('#onbSkip').onclick = () => {
+    const el = $('#onbPersona');
+    if (el) personaInput = el.value.trim();
+    finish();
+  };
+
+  gate.style.display = 'flex';
+  render();
+}
+
+/** 只在需要时弹一次。 */
+function maybeOnboard() {
+  if (onbSeen()) return false;
+  // 老账号（已有会话）不打扰 —— 他们早过了新手期
+  if ((state.rooms || []).length) { onbMarkSeen(); return false; }
+  showOnboarding();
+  return true;
+}
 
 /* ---------- 账号操作 ---------- */
 
@@ -2331,7 +2586,18 @@ $('#btnDeleteAccount').onclick = async () => {
 async function submitAuth() {
   const email = $('#authEmail').value.trim();
   const password = $('#authPass').value;
-  if (!email || !password) { showAuthGate('Please fill in both fields.'); return; }
+
+  // 各模式的必填项不同：重置只要新密码（身份由令牌确定），
+  // 忘记密码只要邮箱，其余两个字段都要。
+  if (authMode === 'forgot') {
+    if (!email) { showAuthGate('Please enter your email address.'); return; }
+  } else if (authMode === 'reset') {
+    if (!password) { showAuthGate('Please enter a new password.'); return; }
+    if (password.length < 8) {
+      showAuthGate('Password must be at least 8 characters.'); return; }
+  } else if (!email || !password) {
+    showAuthGate('Please fill in both fields.'); return;
+  }
 
   // 注册前必须勾选同意条款。客户端拦一道，服务端也会再校验一次。
   if (authMode === 'register' && !$('#authTos').checked) {
@@ -2341,21 +2607,56 @@ async function submitAuth() {
 
   $('#authSubmit').disabled = true;
   try {
+    // ── 忘记密码：发邮件 ──
+    if (authMode === 'forgot') {
+      const r = await api('/api/auth/forgot', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ email: email })
+      });
+      if (r.flag !== 0) { showAuthGate(authErrorText(r.msg)); return; }
+      // 服务端不论邮箱存不存在都回成功（防枚举），这里文案也必须中性。
+      showAuthGate('If that email is registered, a reset link is on its way. '
+                   + 'Check your inbox and spam folder.', true);
+      return;
+    }
+
+    // ── 重置密码：提交新密码 ──
+    if (authMode === 'reset') {
+      const r = await api('/api/auth/reset', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ token: resetToken, newPassword: password })
+      });
+      if (r.flag !== 0) { showAuthGate(authErrorText(r.msg)); return; }
+      resetToken = '';
+      clearResetParam();
+      $('#authPass').value = '';
+      authMode = 'login';
+      showAuthGate('Password updated. Sign in with your new password.', true);
+      return;
+    }
+
+    const payload = { email, password, acceptedTerms: authMode === 'register' };
+    if (authMode === 'register') {
+      // 昵称与「角色怎么称呼你」在注册时就收集。事后去侧栏 Edit profile
+      // 里填是很容易错过的 —— 而 persona 决定了角色能不能叫出你的名字。
+      payload.nickname = ($('#authName').value || '').trim();
+      payload.personaName = ($('#authPersona').value || '').trim();
+    }
     const r = await api(authMode === 'login' ? '/api/auth/login' : '/api/auth/register', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        email: email,
-        password: password,
-        acceptedTerms: authMode === 'register'
-      })
+      body: JSON.stringify(payload)
     });
     if (r.flag !== 0) { showAuthGate(authErrorText(r.msg)); return; }
+    const wasRegister = (authMode === 'register');
     AUTH_TOKEN.set(r.data.token);
     state.user = r.data.user;
     $('#authPass').value = '';
     hideAuthGate();
     await loadAppData();
+    // 注册成功后先讲清楚 hearts 怎么用 —— 而不是直接把新用户
+    // 丢进角色列表，让他自己撞上余额归零那一刻。
+    if (wasRegister) maybeOnboard();
   } catch (e) {
     showAuthGate('Cannot reach the server. Check your connection.');
   } finally {
@@ -2365,9 +2666,48 @@ async function submitAuth() {
 
 $('#authSubmit').onclick = submitAuth;
 $('#authSwitch').onclick = () => {
-  authMode = authMode === 'login' ? 'register' : 'login';
+  // 四种模式里只有 login↔register 是“取反”，forgot/reset 都要回归登录。
+  authMode = (authMode === 'login') ? 'register' : 'login';
+  if (authMode !== 'register') { resetToken = ''; clearResetParam(); }
   showAuthGate('');
 };
+
+/* ---- 忘记密码 ---- */
+let resetToken = '';
+
+$('#authForgot').onclick = () => {
+  authMode = 'forgot';
+  // 预填刚才输错的邮箱，用户不用再敲一遍
+  const typed = ($('#authEmail').value || '').trim();
+  showAuthGate('');
+  if (typed) $('#authEmail').value = typed;
+  $('#authEmail').focus();
+};
+
+/** 从地址栏里取重置令牌。
+ *  邮件里的链接形如 https://host/?reset=<token>。
+ *  拿完立即把参数抹掉 —— 否则刷新页面会把旧令牌再提交一次（已失效），
+ *  而且令牌留在地址栏里容易被截图、被浏览器历史记下。 */
+function takeResetTokenFromUrl() {
+  let token = '';
+  try {
+    const u = new URL(location.href);
+    token = (u.searchParams.get('reset') || '').trim();
+    if (token) {
+      u.searchParams.delete('reset');
+      history.replaceState(null, '', u.toString());
+    }
+  } catch (e) { /* file:// 等环境没有 URL 解析，忽略 */ }
+  return token;
+}
+
+function clearResetParam() {
+  try {
+    const u = new URL(location.href);
+    u.searchParams.delete('reset');
+    history.replaceState(null, '', u.toString());
+  } catch (e) {}
+}
 $('#authPass').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); submitAuth(); }
 });
@@ -2377,6 +2717,19 @@ $('#authEmail').addEventListener('keydown', e => {
 
 /** 有有效令牌就直接进；否则显示登录界面并等用户操作。 */
 async function ensureAuth() {
+  // 先看有没有重置令牌 —— 优先级高于已登录状态。
+  // 用户点了邮件里的链接，意图明确是「改密码」，不该因为这台设备
+  // 还留着旧令牌就把他送进应用、把链接的意图吞掉。
+  const rt = takeResetTokenFromUrl();
+  if (rt) {
+    resetToken = rt;
+    authMode = 'reset';
+    // 重置时不该再用旧身份：清掉本地令牌，避免改完密码后旧会话还活着
+    AUTH_TOKEN.clear();
+    showAuthGate('Choose a new password for your account.');
+    return false;
+  }
+
   if (!AUTH_TOKEN.get()) { showAuthGate(''); return false; }
   try {
     // 用 bootstrap 而非 /api/auth/me —— 验令牌的同时把首屏数据一起取回，
@@ -2402,8 +2755,10 @@ function applyBootstrap(d) {
   state.rooms = d.rooms || [];
 
   if (state.modes.length) {
+    // 用 label 而不是内部 id：`classic` 对用户没有意义，
+    // `Classic · 2💖` 才能让“多花几分钱换什么”变得可判断。
     $('#modeSel').innerHTML = state.modes.map(m =>
-      `<option value="${m.id}">${m.id} · ${m.heartCost}💖</option>`).join('');
+      `<option value="${m.id}">${m.label || m.id} · ${m.heartCost}💖</option>`).join('');
     $('#modeSel').value = 'classic';
   }
   updateCost();
