@@ -130,6 +130,20 @@ IMAGE_PROVIDER = os.environ.get("IMAGE_PROVIDER", "minimax").strip().lower()
 NOVITA_API = os.environ.get("NOVITA_BASE_URL", "https://api.novita.ai").rstrip("/")
 NOVITA_IMAGE_MODEL = os.environ.get("NOVITA_IMAGE_MODEL", "ming-image-0.1-design")
 
+# ⚠️ 必须带浏览器 User-Agent。
+#
+# Novita 前面是 Cloudflare，它封了 urllib 的默认 UA
+# （Python-urllib/3.x）。实测：同一个请求、同一个 key，
+# 不设 UA → 403 "error code: 1010"，设了浏览器 UA → 200。
+#
+# 这个错误非常有欺骗性：403 + 一个数字代码，看起来像鉴权失败或余额不足，
+# 完全没有提到 UA。排查时极易误判为「key 没配好」。
+# 用标准浏览器 UA 而不是伪造自家标识，是因为 CF 的规则就是按 UA 分。
+NOVITA_USER_AGENT = os.environ.get(
+    "NOVITA_USER_AGENT",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+
 
 def novita_key() -> str:
     return os.environ.get("NOVITA_API_KEY", "").strip()
@@ -184,6 +198,7 @@ def _generate_novita(prompt: str, aspect_ratio: str, n: int, negative: str) -> d
         headers={
             "Content-Type": "application/json",
             "Authorization": "Bearer " + key,
+            "User-Agent": NOVITA_USER_AGENT,
         },
         method="POST",
     )
