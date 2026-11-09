@@ -565,6 +565,48 @@ class API:
         mid = int(body.get("momentId", 0))
         return ok({"deleted": self.s.delete_moment(u["id"], mid)})
 
+    # ---- 删除：会话 / 记忆 / 角色 ---------------------------------
+    #
+    # 三者都需要校验归属，且要用「删了几行」而非布尔返回 ——
+    # 前端要区分「不存在」（别人删了/刷新）和「不是你的」（越权），
+    # 文字提示完全不同。越权统一回 not found，不泄露资源是否存在。
+
+    def chatroom_delete(self, body: dict) -> dict:
+        """删会话。连带清空它的消息与记忆 —— messages/memories
+        没有 user_id，不级联就会留下孤儿行（隐私残留 + 统计对不上）。"""
+        u = self.s.ensure_user()
+        try:
+            cid = int(body.get("chatroomId", 0))
+        except (TypeError, ValueError):
+            return err("chatroom not found")
+        n = self.s.delete_chatroom(u["id"], cid)
+        if not n:
+            return err("chatroom not found")
+        return ok({"deleted": n})
+
+    def memory_delete(self, body: dict) -> dict:
+        u = self.s.ensure_user()
+        try:
+            mid = int(body.get("memoryId", 0))
+        except (TypeError, ValueError):
+            return err("memory not found")
+        n = self.s.delete_memory(u["id"], mid)
+        if not n:
+            return err("memory not found")
+        return ok({"deleted": n})
+
+    def role_delete(self, body: dict) -> dict:
+        """删自建角色。内置的 6 个 creator='system'，任何人都删不掉。"""
+        u = self.s.ensure_user()
+        try:
+            rid = int(body.get("roleId", 0))
+        except (TypeError, ValueError):
+            return err("role not found")
+        n = self.s.delete_role(u["id"], rid)
+        if not n:
+            return err("role not found or not yours")
+        return ok({"deleted": n})
+
     def moment_comments(self, moment_id: int) -> dict:
         return ok(self.s.list_comments(moment_id))
 
@@ -2016,6 +2058,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(api.moment_save(self._body(), False))
             if p == "/api/moment/delete":
                 return self._json(api.moment_delete(self._body()))
+            if p == "/api/chatroom/delete":
+                return self._json(api.chatroom_delete(self._body()))
+            if p == "/api/memory/delete":
+                return self._json(api.memory_delete(self._body()))
+            if p == "/api/role/delete":
+                return self._json(api.role_delete(self._body()))
             if p == "/api/moment/comment/create":
                 return self._json(api.moment_comment_create(self._body()))
             if p == "/api/message/send":

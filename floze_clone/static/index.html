@@ -56,6 +56,21 @@
   .item .n{font-weight:600;font-size:13px}
   .item .d{font-size:11px;color:var(--dim);margin-top:2px;
            overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* 会话删除按钮 —— 桌面端仅 hover 显示（列表是高频点击区，
+     常驻一个删除按钮极易误触）；窄屏没有 hover，改为常驻且做小。 */
+  .item{position:relative}
+  .item .roomdel{position:absolute;top:8px;right:8px;width:22px;height:22px;
+        padding:0;line-height:1;border:none;border-radius:50%;
+        background:rgba(0,0,0,.28);color:var(--dim);font-size:11px;
+        cursor:pointer;opacity:0;transition:opacity .15s}
+  .item:hover .roomdel{opacity:1}
+  .item .roomdel:hover{background:var(--rose);color:#fff}
+  @media (max-width:820px){
+    /* 触摸屏没有 hover：常驻显示，但降低对比度减少视觉噪音 */
+    .item .roomdel{opacity:.55}
+    .item.on .roomdel{opacity:.9}
+  }
   .tags{margin-top:5px;display:flex;gap:4px;flex-wrap:wrap}
   .tags span{font-size:10px;padding:1px 6px;border-radius:8px;
              background:rgba(201,106,138,.16);color:var(--rose)}
@@ -806,9 +821,13 @@ async function renderRoleDetail(role) {
       ${r.first_message ? `<div class="sec"><h4>Opening</h4>
         <div class="firstmsg">${r.first_message}</div></div>` : ''}
       ${r.status_bar ? `<div class="statusbar">${r.status_bar}</div>` : ''}
-      <div class="sec" style="display:flex;gap:8px;margin-top:16px">
+      <div class="sec" style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
         <button class="act" style="height:36px" id="dStart">开始对话</button>
         <button class="ghost" id="dChapters">📖 查看章节</button>
+        ${r.creator && String(r.creator) !== 'system'
+          ? '<button class="ghost" id="dDelete" style="color:var(--rose);'
+            + 'border-color:rgba(214,107,138,.45)">删除角色</button>'
+          : ''}
       </div>
     </div>`;
   box.appendChild(wrap);
@@ -823,6 +842,24 @@ async function renderRoleDetail(role) {
     state.tab = 'chapters';
     switchTab('chapters');
   };
+
+  // 只给自建角色显示删除。内置的 6 个 creator='system'，
+  // 服务端也会拦（不能只靠前端隐藏）。
+  const delBtn = wrap.querySelector('#dDelete');
+  if (delBtn) {
+    delBtn.onclick = async () => {
+      if (!await confirmDelete(
+        `删除角色「${r.name}」？已有的会话不受影响，但你不能再开新的。`)) return;
+      const rr = await api('/api/role/delete', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ roleId: r.id })
+      });
+      if (rr.flag !== 0) return toast('删除失败：' + (rr.msg || '未知错误'));
+      await refreshRoles();
+      switchTab('roles');
+      toast('角色已删除');
+    };
+  }
 }
 
 /* 列表填充逻辑抽出来，侧栏（桌面/抽屉）与主区（窄屏）共用同一份。 */
@@ -860,10 +897,44 @@ function fillRoomsInto(box) {
     const d = document.createElement('div');
     d.className = 'item' + (state.chatroom && state.chatroom.id === c.id ? ' on' : '');
     d.innerHTML = `<div class="n">${esc(c.role_name)}</div>
-      <div class="d">${c.chat_mode} · ${new Date(c.updated_at*1000).toLocaleString()}</div>`;
+      <div class="d">${esc(modeLabel(c.chat_mode))} · ${new Date(c.updated_at*1000).toLocaleString()}</div>`;
     d.onclick = () => { navOpen(false); openRoom(c); };
+
+    // 删除按钮：默认隐藏，滑过/长按才出现 —— 会话列表是高频点击区，
+    // 常驻一个删除按钮很容易误触。窄屏没有 hover，所以直接展示。
+    const del = document.createElement('button');
+    del.className = 'roomdel';
+    del.textContent = '✕';
+    del.title = '删除会话';
+    del.onclick = async (ev) => {
+      ev.stopPropagation();
+      if (!await confirmDelete(
+        `删除与「${c.role_name}」的会话？聊天记录与记忆会一起消失，无法恢复。`)) return;
+      const r = await api('/api/chatroom/delete', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ chatroomId: c.id })
+      });
+      if (r.flag !== 0) return toast('删除失败：' + (r.msg || '未知错误'));
+      if (state.chatroom && state.chatroom.id === c.id) {
+        state.chatroom = null; state.role = null;
+        $('#who').textContent = '选择一个角色开始';
+        $('#sub').textContent = '';
+        $('#chat').innerHTML = '<div class="empty">从列表里选一个角色，点击「开始对话」</div>';
+        $('#composer').style.display = 'none';
+      }
+      await refreshRooms();
+      renderList();
+      toast('会话已删除');
+    };
+    d.appendChild(del);
     box.appendChild(d);
   });
+}
+
+/** 档位的用户可见名。后端只给了 label，这里做一层容错。 */
+function modeLabel(id) {
+  const m = (state.modes || []).find(x => x.id === id);
+  return (m && m.label) || id || '';
 }
 
 function renderList() {
@@ -1510,6 +1581,20 @@ async function renderChapters() {
   const r = await api('/api/hidden-chapter/list?roleId=' + state.role.id);
   if (r.flag !== 0) return toast('加载失败：' + r.msg);
   const d = r.data;
+
+  /* 这个角色没有章节（目前 6 个内置角色里只有 Lucien 配了 6 章）。
+   * 旧版会照常渲染「已解锁 0/0」和一个空列表 —— 用户点一次就知道
+   * 这里什么都没有，再也不会点。不如直接说清楚。 */
+  if (!d.total) {
+    box.innerHTML =
+      '<div class="empty" style="max-width:320px;line-height:1.9">'
+      + '<div style="font-size:14px;color:var(--ink);margin-bottom:8px">'
+      + esc(state.role.name) + ' 暂无隐藏章节</div>'
+      + '<div style="font-size:12.5px;color:var(--dim)">'
+      + '隐藏章节会随好感度提升逐步解锁。目前这个角色还没有配置章节。'
+      + '</div></div>';
+    return;
+  }
 
   const head = document.createElement('div');
   head.className = 'ch';
@@ -2169,13 +2254,90 @@ function updateCost() {
 
 $('#btnEarn').onclick = () => openQuests();
 
+/* 记忆面板：查看当前会话已有的记忆 + 手动生成摘要 + 逐条删除。
+ *
+ * 原来「🧠 记忆」按钮直接调 summarize 然后弹一个 toast ——
+ * 用户看不到已经存了什么，也没法删。记忆会进入每一轮的 system prompt，
+ * 存错了内容会一直影响后续对话，所以必须可查看、可删除。
+ */
 $('#btnMem').onclick = async () => {
   if (!state.chatroom) return toast('请先进入一个会话');
-  const r = await api('/api/memory/summarize', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ chatroomId: state.chatroom.id })
-  });
-  toast(r.flag === 0 ? '记忆已写入：' + r.data.summary.slice(0, 40) : '摘要失败：' + r.msg);
+
+  const mask = document.createElement('div');
+  mask.style.cssText =
+    'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:300;'
+    + 'display:flex;align-items:center;justify-content:center;padding:22px';
+  mask.innerHTML =
+    '<div style="background:var(--panel);border:1px solid var(--line);'
+    + 'border-radius:14px;padding:18px;width:100%;max-width:400px;'
+    + 'max-height:82vh;overflow-y:auto">'
+    + '<div style="font-size:15px;font-weight:600;margin-bottom:4px">记忆</div>'
+    + '<div style="font-size:11.5px;color:var(--dim);margin-bottom:14px">'
+    + '这些内容会在之后的对话里持续影响角色。写错了可以删。'
+    + '</div><div id="memBody"></div>'
+    + '<button class="ghost" id="memNew" style="width:100%;padding:9px;margin-top:12px">'
+    + '＋ 生成记忆摘要</button>'
+    + '<button class="ghost" id="memClose" style="width:100%;padding:9px;margin-top:7px">关闭</button>'
+    + '</div>';
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  mask.querySelector('#memClose').onclick = close;
+  mask.onclick = (e) => { if (e.target === mask) close(); };
+
+  const body = mask.querySelector('#memBody');
+  const KIND = { diary: '日记', summary: '关键片段', fact: '事实' };
+
+  const load = async () => {
+    const r = await api('/api/memory/list?chatroomId=' + state.chatroom.id);
+    const items = (r.flag === 0 && r.data) ? r.data : [];
+    if (!items.length) {
+      body.innerHTML = '<div style="font-size:12px;color:var(--dim);'
+        + 'padding:14px 0;text-align:center">还没有记忆</div>';
+      return;
+    }
+    body.innerHTML = '';
+    // 倒序：最新的在最上面，符合「刚发生的事最相关」的直觉
+    items.slice().reverse().forEach(m => {
+      const row = document.createElement('div');
+      row.className = 'qp-row';
+      row.style.cssText = 'align-items:flex-start;margin-bottom:8px';
+      row.innerHTML = '<div class="qp-main"><div style="font-size:11px;'
+        + 'color:var(--gold);margin-bottom:3px">'
+        + esc(KIND[m.kind] || m.kind) + '</div>'
+        + '<div style="font-size:12.5px;line-height:1.6;white-space:pre-wrap">'
+        + esc(m.content) + '</div></div>';
+      const del = document.createElement('button');
+      del.className = 'qp-btn';
+      del.textContent = '删除';
+      del.onclick = async () => {
+        if (!await confirmDelete('删除这条记忆？它会从之后的对话里消失。')) return;
+        const rr = await api('/api/memory/delete', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ memoryId: m.id })
+        });
+        if (rr.flag !== 0) return toast('删除失败：' + (rr.msg || '未知错误'));
+        toast('记忆已删除');
+        load();
+      };
+      row.appendChild(del);
+      body.appendChild(row);
+    });
+  };
+
+  mask.querySelector('#memNew').onclick = async (ev) => {
+    const btn = ev.currentTarget;
+    btn.disabled = true; btn.textContent = '生成中…';
+    const r = await api('/api/memory/summarize', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ chatroomId: state.chatroom.id })
+    });
+    btn.disabled = false; btn.textContent = '＋ 生成记忆摘要';
+    if (r.flag !== 0) return toast('生成失败：' + (r.msg || '未知错误'));
+    toast('记忆已写入');
+    load();
+  };
+
+  load();
 };
 $('#btnChapters').onclick = () => { state.tab = 'chapters'; switchTab('chapters'); };
 

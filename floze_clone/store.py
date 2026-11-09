@@ -1222,6 +1222,67 @@ class Store:
         self.c.commit()
         return True
 
+    # ---- 删除：会话 / 记忆 / 角色 -------------------------------------
+    #
+    # 为什么现在才补：商店审核对「用户数据删除权」要求越来越严，
+    # 而这三样此前只能通过邮件人工处理。隐私政策里写的「部分删除走邮件」
+    # 属于合规上说得过去、但用户实际拿不到自助能力的状态。
+    #
+    # 一律返回「真的删了几行」，而不是布尔 —— 调用方需要区分
+    # 「不存在」「不是你的」「删成功」，前端文案完全不同。
+
+    def delete_chatroom(self, user_id: int, chatroom_id: int) -> int:
+        """删除一个会话及其全部消息、记忆与好感度记录。
+
+        messages / memories 没有 user_id，必须靠 chatroom_id 级联清理。
+        不清理会留下孤儿行 —— 既是隐私残留，也会让后续统计对不上。
+        """
+        row = self.c.execute(
+            "SELECT user_id FROM chatrooms WHERE id=?", (chatroom_id,)).fetchone()
+        if not row or row["user_id"] != user_id:
+            return 0
+        self.c.execute("DELETE FROM messages WHERE chatroom_id=?", (chatroom_id,))
+        self.c.execute("DELETE FROM memories WHERE chatroom_id=?", (chatroom_id,))
+        cur = self.c.execute("DELETE FROM chatrooms WHERE id=?", (chatroom_id,))
+        self.c.commit()
+        return cur.rowcount
+
+    def delete_memory(self, user_id: int, memory_id: int) -> int:
+        """删除一条记忆。必须校验它属于当前用户的某个会话。"""
+        row = self.c.execute(
+            "SELECT m.chatroom_id, c.user_id FROM memories m"
+            " JOIN chatrooms c ON c.id = m.chatroom_id"
+            " WHERE m.id=?", (memory_id,)).fetchone()
+        if not row or row["user_id"] != user_id:
+            return 0
+        cur = self.c.execute("DELETE FROM memories WHERE id=?", (memory_id,))
+        self.c.commit()
+        return cur.rowcount
+
+    def delete_role(self, user_id: int, role_id: int) -> int:
+        """删除用户自建的角色。
+
+        只允许删自己创建的：`roles.creator` 存的是创建者标识，
+        seed 数据里的 6 个内置角色 creator='system'，任何用户都删不掉 ——
+        否则一个人就能把全站的角色删空。
+
+        连带删除：该角色的隐藏章节、以及用户与它的好感度记录。
+        已有会话不删 —— 用户可能还想读完那段对话，只是不能再开新的。
+        """
+        row = self.c.execute(
+            "SELECT creator FROM roles WHERE id=?", (role_id,)).fetchone()
+        if not row:
+            return 0
+        # 内置角色的 creator 是 'system'；用户自建的是 str(user_id)
+        # （见 server.role_create 里 str(u["id"]) 的写法）。
+        creator = (row["creator"] or "").strip()
+        if creator == "system" or creator != str(user_id):
+            return 0
+        self.c.execute("DELETE FROM hidden_chapters WHERE role_id=?", (role_id,))
+        cur = self.c.execute("DELETE FROM roles WHERE id=?", (role_id,))
+        self.c.commit()
+        return cur.rowcount
+
     # ---- affinity（好感度）------------------------------------------
     AFFINITY_MIN, AFFINITY_MAX = -2000, 2000
 
