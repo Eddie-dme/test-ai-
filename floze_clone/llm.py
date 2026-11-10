@@ -762,16 +762,24 @@ def extract_profile(role: dict, transcript: str, previous: str = "") -> str:
     person = (role.get("name") or "the character")
     parts = [
         "You maintain a short profile of the USER for a roleplay system.",
-        "Extract only durable facts about the person — not plot.",
-        "Good: their name, what they do, what they are worried about, "
-        "how they like to be spoken to, topics they avoid.",
-        "Bad: 'they asked about the east wing' (that is plot, not the person).",
+        "This profile is what lets the character remember who they are talking to.",
+        "",
+        "PRIORITISE in this order. Stop when you run out of lines:",
+        "1. Name and how they want to be addressed",
+        "2. What they do (job, study) and what is currently weighing on them",
+        "3. People close to them and their situation",
+        "4. Things they like or dislike talking about",
+        "5. Concrete everyday details (pets, city, habits)",
+        "",
+        "Do NOT record plot: 'they asked about the east wing' is not a fact "
+        "about the person. Record the person, not the conversation.",
         "",
         "Rules:",
         "- Max 5 lines, one fact per line, plain text, no bullets or numbering.",
         "- Third person, present tense.",
         "- Only facts stated or strongly implied. Do not speculate.",
-        "- If nothing durable is present, output nothing at all.",
+        "- If the transcript only contains small talk with no durable facts, "
+        "output nothing at all.",
     ]
     if previous:
         parts += ["", "Existing profile (update it, do not repeat verbatim):",
@@ -781,7 +789,7 @@ def extract_profile(role: dict, transcript: str, previous: str = "") -> str:
         "model": resolve_model(MAIN_MODEL),
         "messages": [
             {"role": "system", "content": "\n".join(parts)},
-            {"role": "user", "content": transcript[-3500:]},
+            {"role": "user", "content": transcript[-6000:]},
         ],
         "temperature": 0.2,
         "max_completion_tokens": 220,

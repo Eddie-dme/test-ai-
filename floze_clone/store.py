@@ -1135,13 +1135,32 @@ class Store:
             " AND created_at > ?", (chatroom_id, last or 0)).fetchone()
         return (row["c"] or 0) >= every
 
-    def recent_transcript(self, chatroom_id: int, limit: int = 24) -> str:
+    def recent_transcript(self, chatroom_id: int, limit: int = 24,
+                          head: int = 6) -> str:
+        """用于提炼画像的对话片段。
+
+        **头尾各取一段**，而不是只取最近 N 条。原因：
+        用户自我介绍（名字、职业）几乎总是出现在最开头，
+        而近期细节出现在末尾。只取尾部会让画像里丢掉名字 ——
+        实测踩过这个坑，12 条消息的画像里一个有价值的都没有。
+
+        头 6 条 + 尾 18 条，中间用省略标记，让模型知道有省略。
+        """
         rows = self.c.execute(
             "SELECT speaker, content FROM messages WHERE chatroom_id=?"
-            " ORDER BY id DESC LIMIT ?", (chatroom_id, limit)).fetchall()
+            " ORDER BY id", (chatroom_id,)).fetchall()
         names = {"user": "User", "assistant": "Them"}
-        return "\n".join(f"{names.get(r['speaker'], r['speaker'])}: {r['content']}"
-                          for r in reversed(rows))
+
+        def fmt(r):
+            return f"{names.get(r['speaker'], r['speaker'])}: {r['content']}"
+
+        if len(rows) <= limit:
+            return "\n".join(fmt(r) for r in rows)
+        head_rows = rows[:head]
+        tail_rows = rows[-(limit - head):]
+        return ("\n".join(fmt(r) for r in head_rows)
+                + "\n[...]\n"
+                + "\n".join(fmt(r) for r in tail_rows))
 
     def memory_block(self, chatroom_id: int, limit: int = 8) -> str:
         rows = self.c.execute(
