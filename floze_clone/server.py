@@ -2248,8 +2248,12 @@ class Handler(BaseHTTPRequestHandler):
             _usage.update(rec)
 
         try:
+            # affinity 来自 role_affinity（跨会话合并），决定角色的
+            # 说话距离感。传进去之后模型才知道「你们熟到什么程度」。
+            _aff = store.get_affinity(u["id"], chatroom["role_id"])
             for piece in llm.chat_stream(role, persona, memory, history,
-                                         chatroom["chat_mode"], on_usage=_on_usage):
+                                         chatroom["chat_mode"],
+                                         on_usage=_on_usage, affinity=_aff):
                 acc.append(piece)
                 # 出站审核 —— 必须在推送前检查。
                 # 只拦用户输入不够：Play 生成式 AI 政策要求对**模型输出**也做过滤，

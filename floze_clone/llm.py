@@ -102,9 +102,29 @@ CHAT_MODES = {
                 "heart_cost": 5},
 }
 
+# 推拉约束（push-pull）。
+#
+# 为什么必须显式写：模型默认行为是「无条件顺从」—— 用户说什么都给，
+# 永远礼貌、永远配合。这在助理产品里是优点，在角色扮演里是致命的：
+# 没有阻力就没有张力，用户聊三天就腻。
+#
+# 这几条不是让角色变凶，而是**允许它有自己**：
+#   - 有自己的情绪，可以不好
+#   - 可以不回答、可以岔开
+#   - 可以想要东西，也可以拒绝给
+#
+# 边界：全部限定在「心理层面」。不涉及露骨内容，
+# 以守住 Teen 分级（见 store/play-console-forms.md 的分级说明）。
 BASE_SYSTEM = (
     "Portray actions and expressions with asterisks. "
-    "Never break character or mention being an AI."
+    "Never break character or mention being an AI.\n"
+    "You are not a service. You are a person with your own mood, and it can be bad.\n"
+    "You may refuse, deflect, or change the subject. You may be pleased, "
+    "irritated, or cold. Do not always give the user what they want.\n"
+    "Withholding lands harder than giving. Let a silence sit instead of "
+    "filling it. Raise a question you do not answer.\n"
+    "Never summarise the relationship or announce your feelings as a status "
+    "report — show them through what you notice and what you refuse to say."
 )
 
 # 示例对话 —— 实测证明这是控制输出长度最有效的杠杆。
@@ -233,7 +253,8 @@ def thinking_params(model: str) -> dict:
 # ------------------------------------------------------------------ 消息构造
 
 def build_messages(role: dict, persona: dict, memory: str,
-                   history: list[tuple], chat_mode: str) -> list[dict]:
+                   history: list[tuple], chat_mode: str,
+                   affinity: int | None = None) -> list[dict]:
     """
     把 FlOZE 产品结构映射到模型协议。
 
@@ -254,6 +275,12 @@ def build_messages(role: dict, persona: dict, memory: str,
         system += (f"\n\nAppend this status bar at the end of every reply:\n"
                    f"{role['status_bar']}")
     system += f"\n\nStyle: {cfg['style']}\n{BASE_SYSTEM}"
+
+    # 关系状态。传 None 表示调用方没有好感度信息（如回访生成），
+    # 此时不注入，避免给模型一个错误的「neutral」先验。
+    if affinity is not None:
+        system += (f"\n\n[Relationship] {affinity_label(affinity).upper()} "
+                   f"({affinity:+d} / 2000)\n{affinity_guidance(affinity)}")
 
     pname = (persona.get("persona_name") or "").strip() if persona else ""
     pdesc = (persona.get("persona_desc") or "").strip() if persona else ""
@@ -363,7 +390,7 @@ _USAGE_SUPPORTED = True
 
 def chat_stream(role: dict, persona: dict, memory: str,
                 history: list[tuple], chat_mode: str,
-                on_usage=None) -> Iterator[str]:
+                on_usage=None, affinity: int | None = None) -> Iterator[str]:
     """流式生成回复片段。
 
     on_usage: 可选回调，在流结束时（无论正常完成、审核中断还是客户端
@@ -379,7 +406,8 @@ def chat_stream(role: dict, persona: dict, memory: str,
 
     cfg = mode_config(chat_mode)
     messages = trim_to_budget(
-        build_messages(role, persona, memory, history, chat_mode),
+        build_messages(role, persona, memory, history, chat_mode,
+                       affinity=affinity),
         budget=context_limit(cfg["model"]) - 2_000)     # 留输出余量
 
     model_name = resolve_model(cfg["model"])
@@ -650,3 +678,66 @@ def proactive_line(role: dict, memory: str, last_user: str,
         return out[:400]
     except Exception:
         return ""
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 关系状态 → 行为指引
+# ══════════════════════════════════════════════════════════════════════
+#
+# 为什么需要这一段：好感度此前只是个解锁章节的数字，**完全不进 prompt**。
+# 结果是「你聊 1 轮和聊 100 轮，角色表现完全一样」—— 关系没有厚度，
+# 用户感觉不到自己在推进任何东西。
+#
+# 档位与 affinity.describe() 对齐（Devoted/Close/Warm/Curious/Neutral/
+# Distant/Cold），这样前端显示的标签和角色实际的行为是同一套。
+#
+# 写法的要点：
+#   - 描述「怎么说话」，不描述「说什么」—— 后者会锁死剧情
+#   - 每一档都包含「可以不给」的许可（withhold），这是产生张力的地方
+#   - 负向档位不是「变凶」，而是「变远」—— 冷漠比愤怒更伤人，也更真实
+
+AFFINITY_TIERS = [
+    (1500, "devoted", (
+        "You are deeply attached to this person and no longer pretend otherwise. "
+        "You notice small things about them and mention them. You are allowed to "
+        "want things from them — and to say so. Jealousy and possessiveness are "
+        "in character here, but expressed through restraint, not speeches.")),
+    (800, "close", (
+        "There is real familiarity between you now. You tease, you assume, you "
+        "interrupt. You use their name. You may be pleased or displeased with "
+        "them and you show it. Silence between you is comfortable, not awkward.")),
+    (300, "warm", (
+        "You have begun to enjoy this person's company and it unsettles you "
+        "slightly. You are warmer than you intend to be, then pull back. You "
+        "notice when they are not there.")),
+    (50, "curious", (
+        "You are interested despite yourself. You ask questions you do not "
+        "strictly need answered. You are still guarded, and you deflect when "
+        "the conversation gets close to something real.")),
+    (-50, "neutral", (
+        "You are civil but not invested. You do not go out of your way. You "
+        "answer, but you do not offer more than is asked.")),
+    (-300, "distant", (
+        "You keep your distance. Short answers. You do not ask follow-up "
+        "questions. You are not cruel — you are simply not available, and you "
+        "do not explain why.")),
+    (-800, "cold", (
+        "You have decided this person is not worth your attention. You are "
+        "clipped, formal, and entirely without warmth. You do not soften at "
+        "the end of a reply. You may refuse to engage at all.")),
+]
+
+
+def affinity_guidance(affinity: int) -> str:
+    """把好感度转成一段行为指引。未达标时回落最冷档。"""
+    for threshold, _label, text in AFFINITY_TIERS:
+        if affinity >= threshold:
+            return text
+    return AFFINITY_TIERS[-1][2]
+
+
+def affinity_label(affinity: int) -> str:
+    for threshold, label, _text in AFFINITY_TIERS:
+        if affinity >= threshold:
+            return label
+    return "cold"
