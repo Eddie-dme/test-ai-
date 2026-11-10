@@ -311,11 +311,22 @@
   .mainlist .empty{padding:40px 0;text-align:center;color:var(--dim);font-size:13px}
 
   /* ---- 账号区 ---- */
-  .userbox{margin-top:auto;padding:12px 14px 14px;border-top:1px solid var(--line);
-        display:flex;flex-direction:column;gap:7px}
-  .ub-who{font-size:12px;color:var(--dim);margin-bottom:2px;overflow:hidden;
-        text-overflow:ellipsis;white-space:nowrap}
-  .ub-who span{color:var(--ink)}
+  .userbox{margin-top:auto;padding:0;border-top:1px solid var(--line)}
+  /* 折叠后的标题行 —— 始终可见，同时是展开/收起的开关。 */
+  .ub-head{display:flex;align-items:center;justify-content:space-between;
+        width:100%;padding:9px 14px;background:none;border:none;color:var(--dim);
+        font:inherit;cursor:pointer;gap:8px}
+  .ub-head:hover{color:var(--ink)}
+  .ub-head .ub-who{font-size:12px;margin:0;flex:1;min-width:0;text-align:left;
+        overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ub-head .ub-who span{color:var(--ink)}
+  .ub-caret{font-size:9px;opacity:.6;transition:transform .18s;flex:0 0 auto}
+  .userbox.open .ub-caret{transform:rotate(180deg)}
+  /* 菜单主体：展开时才占空间。
+     内容超出可用高度时自己滚动，避免把列表区压没。 */
+  .ub-body{display:none;flex-direction:column;gap:7px;
+        padding:0 14px 12px;max-height:46vh;overflow-y:auto}
+  .userbox.open .ub-body{display:flex}
   .ub-btn{height:32px;border-radius:8px;background:var(--panel2);
         border:1px solid var(--line);color:var(--dim);font:inherit;font-size:12.5px;
         cursor:pointer}
@@ -486,10 +497,16 @@
     <div class="list" id="list"></div>
 
     <!-- 账号区。放在侧栏底部，窄屏下随抽屉一起出现。 -->
-    <div class="userbox">
-      <div class="ub-who">
-        <span id="userName">—</span>
-      </div>
+    <!-- 账号区。默认只显示一行（昵称 + 展开按钮），点开才是完整菜单。
+         原因：这 5 个按钮 + 说明文字固定占 242px，而平板横屏（1024x768）
+         侧栏总高只有 768，列表区被压到 363px —— 7 个角色只能完整看到 4 个。
+         这些操作低频（改密码、登出、删号），不该长期占据高频的列表空间。 -->
+    <div class="userbox" id="userBox">
+      <button class="ub-head" id="ubToggle" aria-expanded="false">
+        <span class="ub-who"><span id="userName">—</span></span>
+        <span class="ub-caret">▴</span>
+      </button>
+      <div class="ub-body" id="ubBody">
       <button class="ub-btn" id="btnEditProfile">Edit profile</button>
       <div id="profileForm" class="pwform" style="display:none">
         <input id="pfNickname" class="authinput" type="text" maxlength="40"
@@ -517,6 +534,7 @@
       <button class="ub-btn" id="btnSignOut">Sign out</button>
       <button class="ub-btn ub-danger" id="btnDeleteAccount">Delete account</button>
       <div class="ub-note">Deleting erases your conversations, memories and hearts.</div>
+      </div>
     </div>
   </aside>
 
@@ -2700,6 +2718,18 @@ function renderAccount() {
   const u = state.user || {};
   $('#userName').textContent = u.nickname || (u.id ? 'User #' + u.id : '—');
 }
+
+/* 账号菜单展开/收起。
+ *
+ * 默认收起 —— 这里的操作（改密码/登出/删号）是低频的，
+ * 而列表是高频的。之前 5 个按钮常驻 242px，
+ * 平板横屏 1024x768 下把 7 个角色压到只能看到 4 个。
+ */
+$('#ubToggle').onclick = () => {
+  const box = $('#userBox');
+  const open = box.classList.toggle('open');
+  $('#ubToggle').setAttribute('aria-expanded', open ? 'true' : 'false');
+};
 
 /* 编辑资料。
    personaName 是「角色怎么称呼你」—— 模型会把它用在回复里，
