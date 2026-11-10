@@ -1097,6 +1097,52 @@ class Store:
             (chatroom_id, kind, content, now()))
         self.c.commit()
 
+    def upsert_profile(self, chatroom_id: int, content: str) -> None:
+        """写入/更新这个会话的用户画像。
+
+        画像只保留**一条**（kind='profile'），每次覆盖而不是追加 ——
+        追加会让它无限增长，最终把对话历史挤出 context。
+
+        注意：仍写进 memories 表，所以 memory_block 会自动带上它，
+        不需要在别处再拼一次。
+        """
+        if not content.strip():
+            return
+        self.c.execute("DELETE FROM memories WHERE chatroom_id=? AND kind='profile'",
+                       (chatroom_id,))
+        self.c.execute(
+            "INSERT INTO memories (chatroom_id, kind, content, created_at)"
+            " VALUES (?,?,?,?)", (chatroom_id, "profile", content.strip(), now()))
+        self.c.commit()
+
+    def get_profile(self, chatroom_id: int) -> str:
+        row = self.c.execute(
+            "SELECT content FROM memories WHERE chatroom_id=? AND kind='profile'"
+            " ORDER BY id DESC LIMIT 1", (chatroom_id,)).fetchone()
+        return row["content"] if row else ""
+
+    def should_refresh_profile(self, chatroom_id: int, every: int = 10) -> bool:
+        """是否该重新提炼画像。
+
+        按「自上次提炼以来新增的用户消息数」判断 —— 不用总轮数，
+        因为角色自己的回复也会拉高总轮数，会让触发过于频繁。
+        """
+        last = self.c.execute(
+            "SELECT MAX(created_at) FROM memories"
+            " WHERE chatroom_id=? AND kind='profile'", (chatroom_id,)).fetchone()[0]
+        row = self.c.execute(
+            "SELECT COUNT(*) c FROM messages WHERE chatroom_id=? AND speaker='user'"
+            " AND created_at > ?", (chatroom_id, last or 0)).fetchone()
+        return (row["c"] or 0) >= every
+
+    def recent_transcript(self, chatroom_id: int, limit: int = 24) -> str:
+        rows = self.c.execute(
+            "SELECT speaker, content FROM messages WHERE chatroom_id=?"
+            " ORDER BY id DESC LIMIT ?", (chatroom_id, limit)).fetchall()
+        names = {"user": "User", "assistant": "Them"}
+        return "\n".join(f"{names.get(r['speaker'], r['speaker'])}: {r['content']}"
+                          for r in reversed(rows))
+
     def memory_block(self, chatroom_id: int, limit: int = 8) -> str:
         rows = self.c.execute(
             "SELECT kind, content FROM memories WHERE chatroom_id=?"
@@ -1105,7 +1151,8 @@ class Store:
             return ""
         lines = ["[Long-term memory — treat as established facts]"]
         for r in reversed(rows):
-            prefix = {"diary": "Diary", "summary": "Key moment", "fact": "Fact"}.get(
+            prefix = {"diary": "Diary", "summary": "Key moment", "fact": "Fact",
+                      "profile": "About the user"}.get(
                 r["kind"], "Note")
             lines.append(f"- {prefix}: {r['content']}")
         return "\n".join(lines)

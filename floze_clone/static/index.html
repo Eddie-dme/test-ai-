@@ -2349,7 +2349,8 @@ $('#btnMem').onclick = async () => {
   mask.onclick = (e) => { if (e.target === mask) close(); };
 
   const body = mask.querySelector('#memBody');
-  const KIND = { diary: '日记', summary: '关键片段', fact: '事实' };
+  const KIND = { diary: '日记', summary: '关键片段', fact: '事实',
+                 profile: '关于你（自动维护）' };
 
   const load = async () => {
     const r = await api('/api/memory/list?chatroomId=' + state.chatroom.id);

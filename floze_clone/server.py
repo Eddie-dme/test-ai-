@@ -2300,6 +2300,12 @@ class Handler(BaseHTTPRequestHandler):
         if _usage:
             store.record_usage(u["id"], cid, chatroom["chat_mode"], _usage)
 
+        # 自动更新用户画像（后台线程，不阻塞这次响应）。
+        # 画像让角色「记得你这个人」，而不只是记得剧情 ——
+        # 这是关系资产的地基。见 _refresh_profile。
+        if full:
+            _spawn_profile_refresh(cid, role)
+
         # 一条内容都没产出（上游 500 / 连接中断 / 提前 closed）→ 退 hearts。
         # 旧版本只发一句 error 事件就结束，用户付了钱、界面上留一条空回复，
         # 刷新后连那条空回复也没了 —— 完全不知道发生了什么。
@@ -2313,6 +2319,57 @@ class Handler(BaseHTTPRequestHandler):
         # messageId 回传前端：AI 回复必须可在应用内举报（同一政策要求）
         emit({"event": "done", "length": len(full), "messageId": mid,
               "refunded": refunded, "heartInfo": store.heart_info(u["id"])})
+
+
+# 自动画像的节流状态。同一会话同时只有一个刷新在跑，
+# 避免用户连发几条时开出多个线程重复提炼同一段对话。
+_profile_busy: set = set()
+_profile_lock = threading.Lock()
+
+
+def _spawn_profile_refresh(chatroom_id: int, role: dict) -> None:
+    """每 N 个用户轮次后台更新一次画像。
+
+    为什么用线程而不是同步做：
+      用户在等回复，画像提炼要 1-3 秒。同步会让每条达到阈值的消息
+      都多等这么久，而用户完全感知不到画像的存在。
+
+    为什么不放进定时任务：
+      定时任务要对全量会话跑，绝大多数此刻没人在聊，白花钱。
+      挂在对话结束的时机上，命中率最高。
+
+    线程里用独立连接 —— sqlite 连接不能跨线程复用。
+    """
+    with _profile_lock:
+        if chatroom_id in _profile_busy:
+            return
+        _profile_busy.add(chatroom_id)
+
+    def _work() -> None:
+        try:
+            conn = connect(init_schema=False)
+            st = Store(conn)
+            if not st.should_refresh_profile(chatroom_id, every=10):
+                return
+            transcript = st.recent_transcript(chatroom_id, limit=24)
+            if len(transcript) < 200:      # 内容太少，提炼不出什么
+                return
+            prev = st.get_profile(chatroom_id)
+            prof = llm.extract_profile(role, transcript, previous=prev)
+            if prof:
+                st.upsert_profile(chatroom_id, prof)
+                print(f"  ✔ profile updated chatroom={chatroom_id} "
+                      f"({len(prof)} 字符)")
+        except Exception as e:
+            print(f"  ⚠️  画像更新失败 chatroom={chatroom_id}: {e}",
+                  file=sys.stderr)
+        finally:
+            with _profile_lock:
+                _profile_busy.discard(chatroom_id)
+
+    t = threading.Thread(target=_work, daemon=True,
+                         name=f"profile-{chatroom_id}")
+    t.start()
 
 
 def local_addresses(port: int) -> list[str]:

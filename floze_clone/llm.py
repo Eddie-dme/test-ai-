@@ -741,3 +741,57 @@ def affinity_label(affinity: int) -> str:
         if affinity >= threshold:
             return label
     return "cold"
+
+
+def extract_profile(role: dict, transcript: str, previous: str = "") -> str:
+    """从对话里提炼「关于用户这个人」的事实，用于自动记忆。
+
+    与 summarize_for_memory 的区别：
+      - summarize 记录**发生了什么**（剧情）
+      - extract_profile 记录**用户是谁**（人、习惯、在意的事）
+
+    后者才是让角色「记得你」的关键。用户不关心角色记不记得剧情，
+    他在意的是「它记得我上周在赶那个项目」。
+
+    刻意限制在 5 行以内：这份画像每一轮都会进 system prompt，
+    太长会挤占对话历史的空间，也会让角色显得像在做笔记。
+    """
+    if not api_key():
+        return ""
+
+    person = (role.get("name") or "the character")
+    parts = [
+        "You maintain a short profile of the USER for a roleplay system.",
+        "Extract only durable facts about the person — not plot.",
+        "Good: their name, what they do, what they are worried about, "
+        "how they like to be spoken to, topics they avoid.",
+        "Bad: 'they asked about the east wing' (that is plot, not the person).",
+        "",
+        "Rules:",
+        "- Max 5 lines, one fact per line, plain text, no bullets or numbering.",
+        "- Third person, present tense.",
+        "- Only facts stated or strongly implied. Do not speculate.",
+        "- If nothing durable is present, output nothing at all.",
+    ]
+    if previous:
+        parts += ["", "Existing profile (update it, do not repeat verbatim):",
+                  previous]
+
+    payload = {
+        "model": resolve_model(MAIN_MODEL),
+        "messages": [
+            {"role": "system", "content": "\n".join(parts)},
+            {"role": "user", "content": transcript[-3500:]},
+        ],
+        "temperature": 0.2,
+        "max_completion_tokens": 220,
+        **thinking_params(MAIN_MODEL),
+    }
+    try:
+        d = _post(payload, timeout=90, retries=2)
+        out = strip_reasoning(d["choices"][0]["message"]["content"] or "").strip()
+        # 超过 5 行说明模型没听指令，截断而不是把一整段塞进 prompt
+        lines = [l.strip() for l in out.splitlines() if l.strip()]
+        return "\n".join(lines[:5])
+    except Exception:
+        return ""
