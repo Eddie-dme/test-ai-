@@ -182,6 +182,15 @@
   .ch{background:linear-gradient(180deg,#1a1630,#161327);border:1px solid #2b2542;
       border-radius:12px;padding:13px 15px;max-width:620px;width:100%}
   .ch.locked{opacity:.62}
+
+  /* 已解锁的章节加一条左侧竖线 + 基线色描边。
+     原本只靠 🔓 / 🔒 两个 emoji 区分状态，但它们的轮廓几乎一样（
+     都是锁的形状），在手机上快速扫视时看不出差别 ——
+     尤其部分 Android 的 emoji 字体会把它们画得高度相似。
+     用颜色和边框做状态信号，emoji 只做辅助。 */
+  .ch:not(.locked){border-left:2px solid var(--rose)}
+  .ch:not(.locked) .t{color:var(--ink)}
+  .ch.locked .t{color:var(--dim)}
   .ch .h{display:flex;justify-content:space-between;align-items:center;gap:10px}
   .ch .t{font-weight:600;font-size:13.5px}
   .ch .th{font-size:11px;color:var(--dim);white-space:nowrap}
@@ -1608,7 +1617,7 @@ async function renderChapters() {
     const el = document.createElement('div');
     el.className = 'ch' + (c.unlocked ? '' : ' locked');
     el.innerHTML = `<div class="h">
-        <span class="t">${c.unlocked ? '🔓' : '🔒'} ${c.title}
+        <span class="t">${c.unlocked ? '▸' : '🔒'} ${c.title}
           <span class="pill ${c.type === 'negative' ? 'neg' : 'pos'}">${c.type === 'negative' ? '负向' : '正向'}</span>
         </span>
         <span class="th">需好感度 ${c.type === 'negative' ? '≤' : '≥'} ${c.affinity_threshold}</span>
