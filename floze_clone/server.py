@@ -2351,8 +2351,10 @@ def _spawn_profile_refresh(chatroom_id: int, role: dict) -> None:
             st = Store(conn)
             if not st.should_refresh_profile(chatroom_id, every=10):
                 return
-            transcript = st.recent_transcript(chatroom_id, limit=24)
-            if len(transcript) < 200:      # 内容太少，提炼不出什么
+            # 只喂用户说的话。角色回复长度是用户的 50 倍，
+            # 混进去会让模型把台词当素材（实测踩过）。
+            transcript = st.user_utterances(chatroom_id, limit=40, head=8)
+            if len(transcript) < 60:       # 内容太少，提炼不出什么
                 return
             prev = st.get_profile(chatroom_id)
             prof = llm.extract_profile(role, transcript, previous=prev)

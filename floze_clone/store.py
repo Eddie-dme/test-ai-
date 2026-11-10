@@ -1135,6 +1135,25 @@ class Store:
             " AND created_at > ?", (chatroom_id, last or 0)).fetchone()
         return (row["c"] or 0) >= every
 
+    def user_utterances(self, chatroom_id: int, limit: int = 40,
+                        head: int = 8) -> str:
+        """只取用户说过的话，用于提炼画像。
+
+        **必须过滤掉角色回复** —— 实测发现的坑：角色回复长度是用户的
+        50 倍左右（90 字符 vs 4500 字符），把完整 transcript 喂给模型时，
+        98% 的内容是角色的表演，模型会把台词当成「用户信息」写进画像，
+        最终画像里全是角色自己的独白。
+
+        头尾各取一段：用户自我介绍总在最开头，近期状态在末尾。
+        """
+        rows = self.c.execute(
+            "SELECT content FROM messages WHERE chatroom_id=? AND speaker='user'"
+            " ORDER BY id", (chatroom_id,)).fetchall()
+        texts = [r["content"] for r in rows]
+        if len(texts) > limit:
+            texts = texts[:head] + ["[...]"] + texts[-(limit - head):]
+        return "\n".join(f"- {t}" for t in texts)
+
     def recent_transcript(self, chatroom_id: int, limit: int = 24,
                           head: int = 6) -> str:
         """用于提炼画像的对话片段。
