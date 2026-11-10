@@ -107,6 +107,10 @@ CREATE TABLE IF NOT EXISTS messages (
     content         TEXT NOT NULL,
     heart_cost      INTEGER NOT NULL DEFAULT 0,
     is_ad_funded    INTEGER NOT NULL DEFAULT 0,   -- 对应 sendMsg({isAdFunded:true})
+    -- kind: normal | proactive。proactive 是角色主动发起的回访消息，
+    -- 在会话列表上以未读标记呈现，用户进入会话后置为已看。
+    kind            TEXT NOT NULL DEFAULT 'normal',
+    seen_at         REAL NOT NULL DEFAULT 0,
     created_at      REAL NOT NULL
 );
 
@@ -479,6 +483,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
                      ("terms_accepted_at", "REAL DEFAULT 0")):
         if col not in cols:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
+
+    # messages 的 kind / seen_at（角色主动回访需要）。
+    # 与 users 同理：旧库不会因为 SCHEMA 改了而自动加列。
+    mcols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
+    if mcols:
+        if "kind" not in mcols:
+            conn.execute("ALTER TABLE messages ADD COLUMN kind TEXT"
+                         " NOT NULL DEFAULT 'normal'")
+        if "seen_at" not in mcols:
+            conn.execute("ALTER TABLE messages ADD COLUMN seen_at REAL"
+                         " NOT NULL DEFAULT 0")
     conn.commit()
 
 
@@ -885,11 +900,101 @@ class Store:
 
     # ---- chatroom ---------------------------------------------------
     def list_chatrooms(self, user_id: int) -> list[dict]:
+        """会话列表，附带回访相关的两个字段。
+
+        proactiveUnread：有多少条角色主动发的、用户还没看的消息。
+        会话列表上要显示成未读标记 —— 用户不知道有消息就不会点进来，
+        那回访就白做了。
+        """
         rows = self.c.execute(
-            "SELECT c.*, r.name AS role_name"
+            "SELECT c.*, r.name AS role_name,"
+            " (SELECT COUNT(*) FROM messages m"
+            "   WHERE m.chatroom_id=c.id AND m.kind='proactive'"
+            "     AND m.seen_at=0) AS proactiveUnread,"
+            " (SELECT content FROM messages m2"
+            "   WHERE m2.chatroom_id=c.id ORDER BY m2.id DESC LIMIT 1) AS lastMessage"
             " FROM chatrooms c JOIN roles r ON r.id=c.role_id"
             " WHERE c.user_id=? ORDER BY c.updated_at DESC", (user_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    # ---- 角色主动回访 -------------------------------------------------
+    #
+    # 设计：找出「用户曾经聊过、但已经沉默够久」的会话，让角色主动开口。
+    # 关键是**引用具体的记忆**，否则就是骚扰。
+    #
+    # 不做系统推送（FCM/通知权限）的原因：那要原生开发 2-3 天，
+    # 而现在还没有真实用户验证这件事有没有用。先做应用内，
+    # 用户打开 App 就能看到角色「想起」他说过的话。
+
+    PROACTIVE_IDLE_HOURS = 6      # 沉默多久才触发
+    PROACTIVE_MIN_MESSAGES = 4    # 少于这么多条说明用户没真正开始聊
+    PROACTIVE_MAX_PER_DAY = 1     # 每个会话每天最多一条，避免刷屏
+
+    def _day_key(self) -> str:
+        return time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
+
+    def due_for_proactive(self, user_id: int, limit: int = 3) -> list[dict]:
+        """需要回访的会话。"""
+        day = self._day_key()
+        rows = self.c.execute(
+            "SELECT c.id, c.role_id, c.chat_mode, c.updated_at,"
+            "  (SELECT COUNT(*) FROM messages m WHERE m.chatroom_id=c.id) AS msgCount,"
+            "  (SELECT MAX(created_at) FROM messages m2 WHERE m2.chatroom_id=c.id) AS lastAt"
+            " FROM chatrooms c WHERE c.user_id=?", (user_id,)).fetchall()
+        cutoff = now() - self.PROACTIVE_IDLE_HOURS * 3600
+        out = []
+        for r in rows:
+            d = dict(r)
+            if (d["msgCount"] or 0) < self.PROACTIVE_MIN_MESSAGES:
+                continue
+            if (d["lastAt"] or 0) > cutoff:
+                continue
+            # 今天已经发过就跳过 —— 用 heart_ledger 的 reason 判重，
+            # 和签到/免费生图同一套机制，不新建表。
+            key = "proactive:%d:%s" % (d["id"], day)
+            if self.c.execute(
+                    "SELECT 1 FROM heart_ledger WHERE user_id=? AND reason=? LIMIT 1",
+                    (user_id, key)).fetchone():
+                continue
+            out.append(d)
+            if len(out) >= limit:
+                break
+        return out
+
+    def mark_proactive_sent(self, user_id: int, chatroom_id: int) -> None:
+        """记一天一次。delta=0，纯标记。"""
+        try:
+            self.c.execute(
+                "INSERT OR IGNORE INTO heart_ledger (user_id, delta, reason, created_at)"
+                " VALUES (?,?,?,?)",
+                (user_id, 0, "proactive:%d:%s" % (chatroom_id, self._day_key()), now()))
+            self.c.commit()
+        except Exception:
+            self.c.rollback()
+
+    def add_proactive_message(self, chatroom_id: int, content: str) -> int:
+        """写入一条角色主动消息。用 kind='proactive' 与普通回复区分。"""
+        cur = self.c.execute(
+            "INSERT INTO messages (chatroom_id, speaker, content, heart_cost,"
+            " is_ad_funded, kind, seen_at, created_at)"
+            " VALUES (?,?,?,0,0,'proactive',0,?)",
+            (chatroom_id, "assistant", content, now()))
+        self.c.commit()
+        return cur.lastrowid
+
+    def mark_proactive_seen(self, chatroom_id: int) -> int:
+        """用户进入会话 → 把该会话的主动消息标为已看。"""
+        cur = self.c.execute(
+            "UPDATE messages SET seen_at=? WHERE chatroom_id=? AND kind='proactive'"
+            " AND seen_at=0", (now(), chatroom_id))
+        self.c.commit()
+        return cur.rowcount
+
+    def last_user_message(self, chatroom_id: int) -> str:
+        row = self.c.execute(
+            "SELECT content FROM messages WHERE chatroom_id=? AND speaker='user'"
+            " ORDER BY id DESC LIMIT 1", (chatroom_id,)).fetchone()
+        return row["content"] if row else ""
 
     def create_chatroom(self, user_id: int, role_id: int, chat_mode: str, model: str,
                         with_intro: bool = True) -> dict:

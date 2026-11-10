@@ -396,6 +396,56 @@ class API:
     def message_list(self, chatroom_id: int) -> dict:
         return ok(self.s.list_messages(chatroom_id))
 
+    # ---- 角色主动回访 -------------------------------------------------
+    #
+    # 不依赖系统推送（FCM / 通知权限需要原生开发），只在用户打开 App 时
+    # 生成。用户看到会话列表上的未读标记 → 点进去 → 看到角色提起他
+    # 上次说过的话。
+    #
+    # 成本：每条 $0.0003，而且每个会话每天最多一条。
+
+    def proactive_poll(self) -> dict:
+        """检查并生成回访消息。前端在 bootstrap 后调一次。
+
+        为什么由客户端触发而不是定时任务：
+          - 定时任务要对全量用户跑 LLM，绝大多数人不在线，白花钱
+          - 客户端触发 = 只在活跃用户打开时生成，命中率高得多
+          - 代价：离线用户收不到（但本来就没做推送）
+        """
+        u = self.s.ensure_user()
+        due = self.s.due_for_proactive(u["id"], limit=2)
+        made = []
+        for c in due:
+            role = self.s.get_role(c["role_id"])
+            if not role:
+                continue
+            memory = self.s.memory_block(c["id"], limit=4)
+            last = self.s.last_user_message(c["id"])
+            line = llm.proactive_line(role, memory, last, c["chat_mode"])
+            if not line:
+                continue
+            # 模型输出也要过安全审查 —— 与正常回复同一标准
+            if self._screen(line, field="assistant"):
+                continue
+            mid = self.s.add_proactive_message(c["id"], line)
+            self.s.mark_proactive_sent(u["id"], c["id"])
+            made.append({"chatroomId": c["id"], "messageId": mid,
+                         "roleName": role["name"], "text": line})
+        return ok({"generated": len(made), "items": made})
+
+    def proactive_seen(self, body: dict) -> dict:
+        """用户进入会话时把主动消息标为已看。"""
+        u = self.s.ensure_user()
+        try:
+            cid = int(body.get("chatroomId", 0))
+        except (TypeError, ValueError):
+            return err("chatroom not found")
+        row = self.s.c.execute(
+            "SELECT user_id FROM chatrooms WHERE id=?", (cid,)).fetchone()
+        if not row or row["user_id"] != u["id"]:
+            return err("chatroom not found")
+        return ok({"cleared": self.s.mark_proactive_seen(cid)})
+
     # ---- heart
     def heart_list(self) -> dict:
         u = self.s.ensure_user()
@@ -1121,40 +1171,70 @@ class API:
     def ugc_styles(self) -> dict:
         return ok(imagegen.list_styles())
 
-    # 哪个 reason 用哪份额度。
-    # 旧版 _charge 里写死 fq_type = "roleUgc"，导致头像（6 hearts）
-    # 和相册（21 hearts）共用同一份 3 次免费名额 ——
-    # 用户可以把本该 21 hearts 的相册图用头像额度白嫆 3 张。
-    # 没列在这里的 reason 不给免费额度，直接扣 hearts。
-    FREE_QUOTA_FOR = {
-        "ugc_text": "roleUgc",
-        "ugc_photo": "roleUgc",
-        # album_image 刻意不给免费额度：单价高（21），
-        # 且它是一次性消费型功能，不应该成为拉新手段。
-    }
+    # 生图每天 1 次免费 —— 用 heart_ledger 的 reason 判重，不新建表。
+    #
+    # 为什么做成「每日」而不是「终身 3 次」：
+    # 终身额度用完后新用户就再也体验不到生图了（核心差异化功能），
+    # 而每天 1 次让用户每天都有理由回来，成本也只有 $0.0035/天。
+    #
+    # 为什么用流水表而不是 free_quota 计数：
+    # free_quota 只有 count，没有日期，无法按天重置；
+    # 而 heart_ledger 已经有 (user_id, reason) 唯一索引的用法（签到）。
+    # 复用同一套机制，并且天然防并发（插入冲突即视为已用）。
+    IMG_FREE_PER_DAY = 1
+    IMG_FREE_REASONS = ("ugc_text", "ugc_photo", "album_image")
+
+    def _img_free_key(self, reason: str, day: str) -> str:
+        return "imgfree:%s:%s" % (reason, day)
+
+    def _img_free_used(self, user_id: int, reason: str, day: str) -> int:
+        """今天该入口已用掉几次免费生图。"""
+        row = self.s.c.execute(
+            "SELECT COUNT(*) c FROM heart_ledger WHERE user_id=? AND reason=?",
+            (user_id, self._img_free_key(reason, day))).fetchone()
+        return row["c"] if row else 0
+
+    def _img_free_take(self, user_id: int, reason: str, day: str) -> bool:
+        """尝试占用一次免费生图名额。True 表示占到。"""
+        if self.IMG_FREE_PER_DAY <= 0:
+            return False
+        if self._img_free_used(user_id, reason, day) >= self.IMG_FREE_PER_DAY:
+            return False
+        # INSERT OR IGNORE 用唯一索引兜底并发：
+        # 两条请求同时进来只有一个能插入成功，另一个 rowcount=0。
+        try:
+            cur = self.s.c.execute(
+                "INSERT OR IGNORE INTO heart_ledger (user_id, delta, reason, created_at)"
+                " VALUES (?,?,?,?)",
+                (user_id, 0, self._img_free_key(reason, day), time.time()))
+            self.s.c.commit()
+            return cur.rowcount == 1
+        except Exception:
+            self.s.c.rollback()
+            return False
+
+    def _img_free_release(self, user_id: int, reason: str, day: str) -> None:
+        """生成失败时退还免费名额。"""
+        self.s.c.execute(
+            "DELETE FROM heart_ledger WHERE user_id=? AND reason=?",
+            (user_id, self._img_free_key(reason, day)))
+        self.s.c.commit()
 
     def _charge(self, u: dict, cost: int, reason: str):
-        """免费额度 → hearts 的两级策略。返回 (ok, error_response)。
+        """免费额度 → hearts 的两级策略。返回 (cost, error)。
 
-        返回实际的 cost（0 表示走了免费额度），以及消耗的额度类型，
-        调用方在失败时可用它们回滚。
+        cost == 0 表示走了免费名额；调用方失败时用 _refund_charge 回滚。
         """
-        fq_type = self.FREE_QUOTA_FOR.get(reason)
-        if fq_type:
-            fq = self.s.c.execute(
-                "SELECT * FROM free_quota WHERE user_id=? AND type=?",
-                (u["id"], fq_type)).fetchone()
-            if fq and fq["count"] < fq["limit_"]:
-                self.s.c.execute(
-                    "UPDATE free_quota SET count=count+1 WHERE user_id=? AND type=?",
-                    (u["id"], fq_type))
-                self.s.c.commit()
+        if reason in self.IMG_FREE_REASONS:
+            day = time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
+            if self._img_free_take(u["id"], reason, day):
                 return 0, None
         info = self.s.heart_info(u["id"])
         if info["amount"] < cost:
             return cost, err("NOT_ENOUGH_HEARTS")
         self.s.add_hearts(u["id"], -cost, reason)
         return cost, None
+
 
     def _refund_charge(self, u: dict, cost: int, reason: str,
                        used_free_quota: bool) -> None:
@@ -1169,13 +1249,10 @@ class API:
         if cost:
             self.s.add_hearts(u["id"], cost, reason + "_refund")
             return
-        fq_type = self.FREE_QUOTA_FOR.get(reason)
-        if not fq_type or not used_free_quota:
+        if not used_free_quota or reason not in self.IMG_FREE_REASONS:
             return
-        self.s.c.execute(
-            "UPDATE free_quota SET count=MAX(0, count-1)"
-            " WHERE user_id=? AND type=?", (u["id"], fq_type))
-        self.s.c.commit()
+        day = time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
+        self._img_free_release(u["id"], reason, day)
 
     def ugc_generate(self, body: dict) -> dict:
         """头像生成：Text-to-Avatar / Photo-to-Avatar。"""
@@ -1363,7 +1440,27 @@ class API:
     # 每日签到的奖励额度。设计约束：必须**独立于任何消耗行为**，
     # 因为 hearts 归零的用户做不了任何任务（发消息/动态/评论全要付费），
     # 一旦没有零成本入口就是永久死锁 —— 签到是唯一的出口。
-    CHECKIN_HEARTS = 10
+    #
+    # 新用户有 3 天体验期，额度更高（足够聊 15 轮）。
+    # 不是连续签到递减，而是按**注册后天数**算 ——
+    # 否则用户故意断签一天就重置回高额度，递减完全失效。
+    CHECKIN_TIERS = {1: 30, 2: 24, 3: 20}   # 体验期：30/24/20 hearts
+    CHECKIN_DEFAULT = 16                     # D4 起：16 hearts = 8 次 classic
+
+    def _days_since_signup(self, user: dict) -> int:
+        """注册后第几天（1-based）。用服务端时间，不受客户端时区影响。"""
+        try:
+            created = float(user.get("created_at") or 0)
+        except (TypeError, ValueError):
+            return 999
+        if not created:
+            return 999
+        return int((time.time() - created) // 86400) + 1
+
+    def checkin_reward(self, user: dict) -> tuple[int, int]:
+        """返回 (本次签到 hearts, 注册后天数)。"""
+        day = self._days_since_signup(user)
+        return self.CHECKIN_TIERS.get(day, self.CHECKIN_DEFAULT), day
 
     def daily_checkin(self) -> dict:
         """每日签到。零成本，是零余额用户唯一的自救路径。
@@ -1374,16 +1471,26 @@ class API:
         """
         u = self.s.ensure_user()
         day = time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
-        r = self.s.add_hearts_once(u["id"], self.CHECKIN_HEARTS, "checkin:" + day)
+        amount, signup_day = self.checkin_reward(u)
+        r = self.s.add_hearts_once(u["id"], amount, "checkin:" + day)
         if not r["granted"]:
             return err("ALREADY_CHECKED_IN")
-        return ok({"hearts": self.CHECKIN_HEARTS, "balance": r["balance"], "day": day})
+        return ok({"hearts": amount, "balance": r["balance"], "day": day,
+                   "signupDay": signup_day,
+                   "trial": signup_day <= 3,
+                   "nextReward": self.CHECKIN_TIERS.get(signup_day + 1,
+                                                        self.CHECKIN_DEFAULT)})
 
     def checkin_status(self) -> dict:
         u = self.s.ensure_user()
         day = time.strftime("%Y-%m-%d", time.localtime(time.time() + 3 * 3600))
+        amount, signup_day = self.checkin_reward(u)
         return ok({"checkedIn": self.s.has_checked_in(u["id"], day),
-                   "reward": self.CHECKIN_HEARTS, "day": day})
+                   "reward": amount, "day": day,
+                   "signupDay": signup_day,
+                   "trial": signup_day <= 3,
+                   "nextReward": self.CHECKIN_TIERS.get(signup_day + 1,
+                                                        self.CHECKIN_DEFAULT)})
 
     def quest_claim(self, body: dict) -> dict:
         u = self.s.ensure_user()
@@ -1906,6 +2013,7 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/tts/vocal/list":     return self._json(api.tts_vocals())
             if p == "/api/chatroom/list":       return self._json(api.chatroom_list())
             if p == "/api/message/list":        return self._json(api.message_list(int(qs.get("chatroomId", [0])[0])))
+            if p == "/api/proactive/poll":      return self._json(api.proactive_poll())
             if p == "/api/heart/list":          return self._json(api.heart_list())
             if p == "/api/heart/history":       return self._json(api.heart_history())
             if p == "/api/ad/times":            return self._json(api.ad_times())
@@ -2062,6 +2170,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(api.chatroom_delete(self._body()))
             if p == "/api/memory/delete":
                 return self._json(api.memory_delete(self._body()))
+            if p == "/api/proactive/seen":
+                return self._json(api.proactive_seen(self._body()))
             if p == "/api/role/delete":
                 return self._json(api.role_delete(self._body()))
             if p == "/api/moment/comment/create":

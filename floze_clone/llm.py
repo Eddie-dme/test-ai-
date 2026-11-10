@@ -602,3 +602,51 @@ def summarize_for_memory(chatroom_text: str, role_name: str) -> str:
         return strip_reasoning(d["choices"][0]["message"]["content"] or "").strip()
     except Exception:
         return ""
+
+def proactive_line(role: dict, memory: str, last_user: str,
+                   chat_mode: str = "classic") -> str:
+    """生成一句角色主动回访的开场白。
+
+    为什么单独写一个函数而不复用 chat_stream：
+      - 需要极短（2-3 句），不能用角色卡的完整 style 指令
+      - 需要**明确知道**这是「隔了一段时间后的主动开口」，
+        而不是继续上一轮对话
+      - 成本必须极低：这是每天对每个沉默用户各跑一次的操作
+
+    关键设计：**必须引用具体记忆**。通用的「你还好吗」等于骚扰，
+    引用「你上次说东厢房的事」才是「被记住」的感觉。
+    """
+    if not api_key():
+        return ""
+
+    name = role.get("name", "")
+    parts = [f"You are {name}. {role.get('description','')}"]
+    if role.get("personality"):
+        parts.append(f"Personality: {role['personality']}")
+    if memory:
+        parts.append(memory)
+    parts.append(
+        "The user has been away for a while. Write ONE short message (max 2 "
+        "sentences) to draw them back.\n"
+        "Rules:\n"
+        "- Refer to something SPECIFIC from the memory above, or from what they "
+        "last said. Generic 'are you there?' is a failure.\n"
+        "- In character, no acknowledgment that you are an AI or a product.\n"
+        "- No greeting formulas. Start mid-thought if it feels natural.\n"
+        "- Output only the message text.")
+
+    payload = {
+        "model": resolve_model(MAIN_MODEL),
+        "messages": [{"role": "system", "content": "\n\n".join(parts)},
+                     {"role": "user", "content": last_user or "(they left without saying goodbye)"}],
+        "temperature": 0.95,
+        "max_completion_tokens": 160,
+        **thinking_params(MAIN_MODEL),
+    }
+    try:
+        d = _post(payload, timeout=90, retries=2)
+        out = strip_reasoning(d["choices"][0]["message"]["content"] or "").strip()
+        # 太长说明模型没听指令，宁可放弃也不要塞一条小作文给用户
+        return out[:400]
+    except Exception:
+        return ""

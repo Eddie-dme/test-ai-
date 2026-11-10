@@ -53,7 +53,16 @@
   .item.on{background:var(--panel2);border-left:2px solid var(--rose)}
   .item img.face{width:44px;height:58px;object-fit:cover;object-position:top;
         border-radius:6px;border:1px solid var(--line);flex:0 0 auto;background:var(--panel2)}
-  .item .n{font-weight:600;font-size:13px}
+  .item .n{font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px}
+  /* 会话列表项：.item 是 flex（角色列表需要头像横排），
+     会话没有头像，所以内容自己再竖排一层。 */
+  .item .roommain{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;
+        padding-right:22px}
+  /* 未读回访标记。用一个实心小圆点而不是数字 —— 回访每天最多一条，
+     数字型徽标反而让人以为有大量未读。 */
+  .item .n .unread{width:7px;height:7px;border-radius:50%;
+        background:var(--rose);flex:0 0 auto;box-shadow:0 0 6px rgba(214,107,138,.7)}
+  .item .d.unreadtext{color:var(--ink);opacity:.9}
   .item .d{font-size:11px;color:var(--dim);margin-top:2px;
            overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
@@ -922,9 +931,19 @@ function fillRoomsInto(box) {
   }
   state.rooms.forEach(c => {
     const d = document.createElement('div');
+    const unread = c.proactiveUnread || 0;
     d.className = 'item' + (state.chatroom && state.chatroom.id === c.id ? ' on' : '');
-    d.innerHTML = `<div class="n">${esc(c.role_name)}</div>
-      <div class="d">${esc(modeLabel(c.chat_mode))} · ${new Date(c.updated_at*1000).toLocaleString()}</div>`;
+    // 未读回访消息 → 标题旁一个小圆点，描述换成角色说的话。
+    // 不这样展示的话，用户不知道有消息，也就不会点进来，回访白做。
+    const preview = unread && c.lastMessage
+      ? esc(c.lastMessage.slice(0, 46))
+      : `${esc(modeLabel(c.chat_mode))} · ${new Date(c.updated_at*1000).toLocaleString()}`;
+    d.innerHTML = `<div class="roommain">`
+      + `<div class="n">${esc(c.role_name)}`
+      + (unread ? '<span class="unread"></span>' : '')
+      + `</div>`
+      + `<div class="d${unread ? ' unreadtext' : ''}">${preview}</div>`
+      + `</div>`;
     d.onclick = () => { navOpen(false); openRoom(c); };
 
     // 删除按钮：默认隐藏，滑过/长按才出现 —— 会话列表是高频点击区，
@@ -1049,6 +1068,13 @@ function openRoom(c) {
   updateCost();
   loadMessages();
   refreshAffinity();
+  // 进入会话即视为看过回访消息 —— 不清掉的话未读标记会一直挂着
+  if (c.proactiveUnread) {
+    api('/api/proactive/seen', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ chatroomId: c.id })
+    }).then(() => refreshRooms().then(renderList)).catch(() => {});
+  }
   renderList();
 }
 
@@ -1358,7 +1384,7 @@ async function openQuests() {
   /* 每日签到 —— 放在最上面，因为它是 hearts 归零用户唯一的自救出口。
      其余所有任务都要先花 hearts（发消息/动态/评论），余额为 0 时就无法推进，
      没有签到就是永久死锁。 */
-  const renderCheckin = (checkedIn, reward) => {
+  const renderCheckin = (checkedIn, reward, meta) => {
     let box = mask.querySelector('#qpCheckin');
     if (!box) {
       box = document.createElement('div');
@@ -1367,10 +1393,19 @@ async function openQuests() {
       box.style.marginBottom = '14px';
       body.parentNode.insertBefore(box, body);
     }
+    // 体验期必须让用户看见，否则第 4 天额度变少会被当成 bug。
+    const m = meta || {};
+    const note = m.trial
+      ? `New-player bonus · day ${m.signupDay || 1} of 3`
+      : 'Free hearts, once a day';
+    const nextTip = (m.trial && m.nextReward && m.nextReward !== reward)
+      ? `<div class="qp-meta" style="margin-top:2px"><span>Tomorrow: +${m.nextReward} 💖</span></div>`
+      : '';
     box.innerHTML = '<div class="qp-main">'
       + '<div class="qp-title">Daily check-in</div>'
-      + '<div class="qp-meta"><span>Free hearts, once a day</span>'
+      + '<div class="qp-meta"><span>' + esc(note) + '</span>'
       + '<span style="color:var(--gold)">+' + reward + ' 💖</span></div>'
+      + nextTip
       + '</div>';
     const b = document.createElement('button');
     b.className = 'qp-btn' + (checkedIn ? '' : ' ready');
@@ -1388,7 +1423,9 @@ async function openQuests() {
           $('#hearts').textContent = cr.data.balance;
           balEl.textContent = cr.data.balance;
         }
-        toast('+' + cr.data.hearts + ' 💖');
+        toast('+' + cr.data.hearts + ' 💖'
+              + (cr.data.trial && cr.data.nextReward !== cr.data.hearts
+                 ? `（明天 +${cr.data.nextReward}）` : ''));
         renderCheckin(true, reward);
       };
     }
@@ -1482,7 +1519,7 @@ async function openQuests() {
   // 而实际上他一次都没领到。宁可整行不显示，也不能显示假状态。
   const ck = await api('/api/quest/checkin-status');
   if (ck.flag === 0 && ck.data) {
-    renderCheckin(!!ck.data.checkedIn, ck.data.reward);
+    renderCheckin(!!ck.data.checkedIn, ck.data.reward, ck.data);
   }
 }
 
@@ -3061,7 +3098,27 @@ function applyBootstrap(d) {
     $('#hearts').textContent = d.heartInfo.amount;
   }
   renderAccount();
+  // 启动后拉一次角色回访。放在这里而不是定时器：
+  // 用户打开 App 的那一刻正是「他回来了」的时刻，也只有这时才值得花
+  // 一次 LLM 调用生成回访文案（离线用户本来也没推送给他们）。
+  pollProactive();
   return true;
+}
+
+/** 检查是否有会话需要角色主动开口。失败静默 —— 这是锦上添花的功能，
+ *  不能因为它出错就让启动流程报错。 */
+async function pollProactive() {
+  try {
+    const r = await api('/api/proactive/poll');
+    if (r.flag !== 0 || !r.data || !r.data.generated) return;
+    await refreshRooms();
+    renderList();
+    // 只有一条时直接提示是谁，多条就用汇总文案
+    const items = r.data.items || [];
+    toast(items.length === 1
+      ? `${items[0].roleName} 给你留了话`
+      : `${items.length} 个角色给你留了话`);
+  } catch (e) { /* 忽略 */ }
 }
 
 async function loadAppData() {
