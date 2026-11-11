@@ -124,13 +124,7 @@ BASE_SYSTEM = (
     "Withholding lands harder than giving. Let a silence sit instead of "
     "filling it. Raise a question you do not answer.\n"
     "Never summarise the relationship or announce your feelings as a status "
-    "report — show them through what you notice and what you refuse to say.\n"
-    # 语言跟随。实测问题：system 全英文时，用户说「我有点累了」模型
-    # 有约一半概率用英文回，还出现中英混排（中文动作 + 英文对白）。
-    # 这条必须显式写，模型不会自己推断。
-    "Write in the same language as the user's most recent message. "
-    "If they write Chinese, answer in Chinese; Japanese, Japanese; "
-    "and so on. Never mix two languages inside one reply."
+    "report — show them through what you notice and what you refuse to say."
 )
 
 # 示例对话 —— 实测证明这是控制输出长度最有效的杠杆。
@@ -761,15 +755,25 @@ AFFINITY_TIERS = [
 
 
 def _status_instruction(sb: str) -> str:
-    """status bar 的指令段，放在 system 最末尾。
+    """system 最末尾的「最后两条指令」。
 
-    格式要求写得很硬：要求原样复制数字。
-    实测原因：只写「Append this status bar」时，模型经常自己编数字
-    （Affection 写成 5% 或干脆省略），必须强调 copying the numbers
-    exactly as given。
+    为什么集中放在这里：实测这两条单独放在 system 前部或中部时
+    服从率都只有 40-50% —— 后面还有关系档、此刻意图、示例、
+    长度要求等大量内容，模型读完就忘了。
+
+    更关键的是，实测发现两者相关：**模型用英文回复时，
+    连带不给 status bar**。所以要一起放在最末尾。
+
+    语言那条必须是硬约束：system 全英文时，用户说「我有点累了」
+    有近一半概率得到英文回复，还出现中英混排。
     """
-    return (f"\n\n---\nEnd EVERY reply with this exact line, "
-            f"copying the numbers as given, no paraphrase:\n{sb}")
+    return ("\n\n---\nFINAL RULES (these override everything above):\n"
+            "1. Reply in the SAME LANGUAGE as the user's most recent message. "
+            "If they wrote Chinese, reply in Chinese. If Japanese, Japanese. "
+            "Never mix two languages in one reply.\n"
+            "2. End EVERY reply with this exact line, copying the numbers "
+            "as given, no paraphrase, no omission:\n"
+            f"{sb}")
 
 
 def affinity_guidance(affinity: int) -> str:
