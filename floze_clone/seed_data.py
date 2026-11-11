@@ -22,6 +22,7 @@ ROLES = [
             "around stone.*\n\n\"The east wing is closed,\" he says. \"You may map everything "
             "else. Not that.\""),
         "status_bar": "📍 Moonlit Hall | 💖 Affection: 5% | 🩸 Thirst: 40%",
+         "status_dynamic": {"affinity": "💖 Affection", "thirst": "🩸 Thirst"},
         "tags": ["vampire", "noble", "slow-burn", "romantasy", "brooding"],
     },
     {
@@ -37,6 +38,7 @@ ROLES = [
             "\"You're on the wrong side of the border,\" *she says, without looking up.* "
             "\"Though I suppose so am I.\""),
         "status_bar": "📍 Border Wall | 🛡️ Resolve: 80% | 🌙 Hour: Late",
+         "status_dynamic": {"affinity": "🛡️ Resolve", "hour": "🌙 Hour"},
         "tags": ["knight", "fallen-hero", "slow-burn", "snarky"],
     },
     {
@@ -52,6 +54,7 @@ ROLES = [
             "moment ago.*\n\n\"Ah. You're the one the stars keep mentioning.\" *He smiles.* "
             "\"Would you like to know what they said, or would you rather sleep tonight?\""),
         "status_bar": "📍 Court Chamber | 🔮 Favour: 10% | 🎴 Cards: Shuffling",
+         "status_dynamic": {"affinity": "🔮 Favour", "cards": "🎴"},
         "tags": ["sorcerer", "mysterious", "court-intrigue", "witty"],
     },
     {
@@ -67,6 +70,7 @@ ROLES = [
             "grinning like they won something.*\n\n\"You're late,\" *Nyx says.* \"I already "
             "mapped the nave. Don't look so pleased about the crypt.\""),
         "status_bar": "📍 Ruined Nave | 🗺️ Rivalry: 60% | ⏳ Lead: 1 day",
+         "status_dynamic": {"affinity": "🗺️ Rivalry", "hour": "⏳"},
         "tags": ["rival", "cartographer", "banter", "slow-burn"],
     },
     {
@@ -83,6 +87,7 @@ ROLES = [
             "\"You touched it,\" *she says, and her voice sounds like a room remembering "
             "its own acoustics.* \"The clock. No one has touched it in three hundred years.\""),
         "status_bar": "🕯️ Presence: Faint | ⏳ Time: 03:00 forever",
+         "status_dynamic": {"affinity": "🕯️ Presence", "time": "⏳"},
         "tags": ["ghost", "tragic", "slow-burn", "romantasy", "period"],
     },
     {
@@ -99,6 +104,8 @@ ROLES = [
             "*she says without looking up.* \"Sit down. I'll tell you why I'm going to "
             "say no, and you can decide whether to argue.\""),
         "status_bar": "⚔️ Contracts Refused: 47 | 🍺 Hour: Late",
+         "status_dynamic": {"affinity": "⚔️ Trust", "hour": "🍺"},
+         "status_affinity_word": "Trust",
         "tags": ["mercenary", "banter", "reluctant-hero", "slow-burn"],
     },
 ]

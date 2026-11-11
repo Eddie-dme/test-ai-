@@ -2251,9 +2251,13 @@ class Handler(BaseHTTPRequestHandler):
             # affinity 来自 role_affinity（跨会话合并），决定角色的
             # 说话距离感。传进去之后模型才知道「你们熟到什么程度」。
             _aff = store.get_affinity(u["id"], chatroom["role_id"])
+            # 轮次驱动虚拟时间（深夜→黎明）与角色状态（吸血鬼的渴、幽灵的实体度）。
+            # 用 chatroom 的消息数而不是 history 长度 —— history 会被截断到 40 条。
+            _turns = store.count_messages(cid, speaker="user")
             for piece in llm.chat_stream(role, persona, memory, history,
                                          chatroom["chat_mode"],
-                                         on_usage=_on_usage, affinity=_aff):
+                                         on_usage=_on_usage, affinity=_aff,
+                                         turns=_turns):
                 acc.append(piece)
                 # 出站审核 —— 必须在推送前检查。
                 # 只拦用户输入不够：Play 生成式 AI 政策要求对**模型输出**也做过滤，

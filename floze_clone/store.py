@@ -1135,6 +1135,18 @@ class Store:
             " AND created_at > ?", (chatroom_id, last or 0)).fetchone()
         return (row["c"] or 0) >= every
 
+    def count_messages(self, chatroom_id: int, speaker: str | None = None) -> int:
+        """会话里的消息数（可按发言人过滤）。用于驱动虚拟时间推进。"""
+        if speaker:
+            row = self.c.execute(
+                "SELECT COUNT(*) c FROM messages WHERE chatroom_id=? AND speaker=?",
+                (chatroom_id, speaker)).fetchone()
+        else:
+            row = self.c.execute(
+                "SELECT COUNT(*) c FROM messages WHERE chatroom_id=?",
+                (chatroom_id,)).fetchone()
+        return row["c"] if row else 0
+
     def user_utterances(self, chatroom_id: int, limit: int = 40,
                         head: int = 8) -> str:
         """只取用户说过的话，用于提炼画像。

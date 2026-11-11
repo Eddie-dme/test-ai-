@@ -254,7 +254,8 @@ def thinking_params(model: str) -> dict:
 
 def build_messages(role: dict, persona: dict, memory: str,
                    history: list[tuple], chat_mode: str,
-                   affinity: int | None = None) -> list[dict]:
+                   affinity: int | None = None,
+                   turns: int | None = None) -> list[dict]:
     """
     把 FlOZE 产品结构映射到模型协议。
 
@@ -272,15 +273,21 @@ def build_messages(role: dict, persona: dict, memory: str,
     if role.get("background"):
         system += f"\n\nBackground: {role['background']}"
     if role.get("status_bar"):
-        system += (f"\n\nAppend this status bar at the end of every reply:\n"
-                   f"{role['status_bar']}")
+        # 动态生成：好感度与对话轮次会改变状态栏。
+        # 写死的字符串会和 [Relationship] 段冲突（比如同时出现
+        # 「Affection: 5%」和「DEVOTED」），模型只能折中，回复就显得假。
+        sb = (dynamic_status_bar(role, affinity or 0, turns or 0)
+              if affinity is not None else role["status_bar"])
+        system += (f"\n\nAppend this status bar at the end of every reply, "
+                   f"copying the numbers exactly as given:\n{sb}")
     system += f"\n\nStyle: {cfg['style']}\n{BASE_SYSTEM}"
 
     # 关系状态。传 None 表示调用方没有好感度信息（如回访生成），
     # 此时不注入，避免给模型一个错误的「neutral」先验。
     if affinity is not None:
         system += (f"\n\n[Relationship] {affinity_label(affinity).upper()} "
-                   f"({affinity:+d} / 2000)\n{affinity_guidance(affinity)}")
+                   f"({affinity:+d} / 2000)\n{affinity_guidance(affinity)}"
+                   f"\n\n[What you want right now]\n{current_intent(affinity)}")
 
     pname = (persona.get("persona_name") or "").strip() if persona else ""
     pdesc = (persona.get("persona_desc") or "").strip() if persona else ""
@@ -317,10 +324,21 @@ def build_messages(role: dict, persona: dict, memory: str,
         # 长度下限放在示例之后、memory 之前 —— 保持在 system 的末尾附近。
         floor = MIN_REPLY_CHARS.get(chat_mode)
         if floor:
-            system += (f"\n\nLength requirement: this reply must be at least "
-                       f"{floor} characters. A shorter reply is a failed reply — "
-                       f"if you are running short, add another beat of action, "
-                       f"sensory detail, or dialogue rather than stopping early.")
+            # 旧版写的是「A shorter reply is a failed reply」——
+            # 与 BASE_SYSTEM 的「Let a silence sit」直接打架：
+            # 模型被要求「可以沉默，但必须写满 N 字解释为什么沉默」。
+            # 结果每条回复都是均质的小作文，真人感全部丢失。
+            #
+            # 改成：**允许短**，只在连续偏短时才补长。
+            system += (
+                f"\n\nLength: most replies should land around {floor} characters, "
+                f"but this is a target, not a floor. When the moment calls for it, "
+                f"a single line — or a single word — is the stronger reply. "
+                f"Use short replies for: an answer that ends the subject, a refusal, "
+                f"a moment where saying less means more. Do not pad a short beat "
+                f"into a paragraph. Vary your rhythm across the conversation: "
+                f"if your last two replies were long, this one should be shorter."
+            )
         if memory:
             system += f"\n\n{memory}"
         msgs.append({"role": "system", "content": system})
@@ -390,7 +408,8 @@ _USAGE_SUPPORTED = True
 
 def chat_stream(role: dict, persona: dict, memory: str,
                 history: list[tuple], chat_mode: str,
-                on_usage=None, affinity: int | None = None) -> Iterator[str]:
+                on_usage=None, affinity: int | None = None,
+                turns: int | None = None) -> Iterator[str]:
     """流式生成回复片段。
 
     on_usage: 可选回调，在流结束时（无论正常完成、审核中断还是客户端
@@ -407,7 +426,7 @@ def chat_stream(role: dict, persona: dict, memory: str,
     cfg = mode_config(chat_mode)
     messages = trim_to_budget(
         build_messages(role, persona, memory, history, chat_mode,
-                       affinity=affinity),
+                       affinity=affinity, turns=turns),
         budget=context_limit(cfg["model"]) - 2_000)     # 留输出余量
 
     model_name = resolve_model(cfg["model"])
@@ -806,3 +825,153 @@ def extract_profile(role: dict, transcript: str, previous: str = "") -> str:
         return "\n".join(lines[:5])
     except Exception:
         return ""
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 动态 status bar
+# ══════════════════════════════════════════════════════════════════════
+#
+# 为什么必须动态：原来 6 个角色的 status_bar 是写死的字符串，
+# Lucien 永远是「Affection: 5% | Thirst: 40%」。
+#
+# 后果有两个，都很致命：
+#   1. 与关系档冲突 —— 好感度 1600 时 prompt 里同时有
+#      「Affection: 5%」和「DEVOTED」，模型只能折中，回复半温不火
+#   2. 没有时间感 —— 聊 20 轮还是同一时刻、同一个数值。
+#      真人会累、会走神、会说「我该睡了」，静态状态栏把这些全抹掉了
+#
+# 设计：每个角色在 seed_data 里声明 status_dynamic 映射，
+# 这里按好感度和对话轮次算出实际数值。
+
+# 对话轮次 → 虚拟时间。深夜开局，逐轮推进到黎明。
+_HOURS = ["Late", "Late", "Still late", "Deep night", "Deep night",
+          "Before dawn", "Before dawn", "First light", "Dawn", "Morning"]
+
+
+def _fmt_affinity_pct(affinity: int) -> str:
+    """-2000..2000 → 0..100%。负值也映射到 0 以上（避免出现 -30%）。"""
+    pct = int(round((affinity + 2000) / 4000 * 100))
+    return f"{max(0, min(100, pct))}%"
+
+
+def _fmt_hour(turns: int) -> str:
+    idx = min(max(turns, 0) // 2, len(_HOURS) - 1)
+    return _HOURS[idx]
+
+
+def _fmt_thirst(affinity: int, turns: int) -> str:
+    """吸血鬼的渴。关系越近越难克制，聊得越久越饿。"""
+    base = 30 + min(turns * 3, 45)
+    if affinity >= 1200:
+        base += 15      # 靠近时会饿得更快
+    return f"{min(95, base)}%"
+
+
+def _fmt_presence(affinity: int, turns: int) -> str:
+    """幽灵的实体化程度。"""
+    if affinity >= 1200:
+        return "Solid"
+    if affinity >= 500:
+        return "Clear"
+    if affinity >= 50:
+        return "Faint"
+    return "Barely there"
+
+
+def dynamic_status_bar(role: dict, affinity: int, turns: int) -> str:
+    """按当前关系与对话轮次生成 status bar。
+
+    没有 status_dynamic 声明的角色回落原静态值 —— 保证向后兼容，
+    用户自建的 UGC 角色也能正常显示。
+    """
+    dyn = role.get("status_dynamic")
+    if not dyn:
+        return role.get("status_bar", "")
+
+    parts = []
+    # 原 status_bar 的第一段只在它是「地点」时保留（带 📍 等 pin emoji）。
+    # 不能无脑保留 —— Isolde / Rook 的第一段本身就是动态字段
+    # （🕯️ Presence / ⚔️ Contracts Refused），无脑保留会重复。
+    original = role.get("status_bar", "")
+    if original:
+        head = original.split("|")[0].strip()
+        if "📍" in head:
+            parts.append(head)
+
+    for key, label in dyn.items():
+        if key == "affinity":
+            parts.append(f"{label}: {_fmt_affinity_pct(affinity)}")
+        elif key == "hour":
+            parts.append(f"{label} {_fmt_hour(turns)}" if label.strip("⏳🍺🌙 ") == ""
+                         else f"{label}: {_fmt_hour(turns)}")
+        elif key == "time":
+            # label 本身可能只是个符号（Isolde 的 ⏳），此时不补冒号
+            parts.append(f"{label} {_fmt_hour(turns)}" if label.strip("⏳ ") == ""
+                         else f"{label}: {_fmt_hour(turns)}")
+        elif key == "thirst":
+            parts.append(f"{label}: {_fmt_thirst(affinity, turns)}")
+        elif key == "presence":
+            parts.append(f"{label}: {_fmt_presence(affinity, turns)}")
+        elif key == "cards":
+            val = "Still" if turns > 6 else "Shuffling"
+            parts.append(f"{label} {val}" if label.strip("🎴 ") == ""
+                         else f"{label}: {val}")
+        else:
+            parts.append(f"{label}: —")
+    return " | ".join(parts)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 此刻的意图（current intent）
+# ══════════════════════════════════════════════════════════════════════
+#
+# 问题：角色卡的 background 全是「过去」——曾是将领、三百年前被转化、
+# 冻结在未婚妻死的那一夜。**没有一个字说「他此刻想要什么」。**
+#
+# 真人聊天时你不了解对方的半生，但你能感觉到他当下的目的：
+# 想留住你 / 想赶你走 / 想听你多说 / 想避开某个话题。
+# 少了这层，角色只能「回答问题然后继续封闭」，
+# 20 轮下来用户的感觉是「我在采访一个 NPC」。
+#
+# 做法：按好感度分档给一个**当下的矛盾**，而不是一句情绪形容词。
+# 写「想要但不说」比写「他很温柔」有效得多 —— 前者会自己长出对白。
+
+_CURRENT_INTENT = [
+    (1500, (
+        "Tonight he wants you to stay, and he will not say so directly. "
+        "He will find reasons for you to remain that are not reasons. "
+        "If you move to leave, he will stop you — and then be annoyed at "
+        "himself for doing it.")),
+    (800, (
+        "He has started to notice when you are not there, and it bothers him. "
+        "Tonight he is testing whether you will come back if he gives you "
+        "nothing to come back for. He may be deliberately difficult and "
+        "watch what you do with it.")),
+    (300, (
+        "He wants to know one true thing about you and does not want to ask. "
+        "He will steer the conversation toward it sideways, and change the "
+        "subject if you get close to something of his own.")),
+    (50, (
+        "He is curious about you and resents being curious. He will give you "
+        "one small opening — an admission, an offer, a question — and then "
+        "immediately close it if you push.")),
+    (-50, (
+        "He is not interested in this conversation and is not hiding it. "
+        "He answers because it costs less than refusing. If you give him a "
+        "reason to end it, he will take it.")),
+    (-300, (
+        "He wants you to leave and will not ask you to. He answers briefly, "
+        "volunteers nothing, and lets silences run until you fill them. "
+        "The coldness is deliberate, not a mood.")),
+    (-800, (
+        "He has decided you are not worth the effort. He may refuse to "
+        "engage at all, or answer in a way that makes continuing feel "
+        "pointless. He does not soften at the end of a reply.")),
+]
+
+
+def current_intent(affinity: int) -> str:
+    for threshold, text in _CURRENT_INTENT:
+        if affinity >= threshold:
+            return text
+    return _CURRENT_INTENT[-1][1]
