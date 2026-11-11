@@ -276,6 +276,7 @@ def build_messages(role: dict, persona: dict, memory: str,
     # 实测：放在 system 前部时服从率只有 40%（10 次采样里 6 次漏掉），
     # 因为后面还有 Style / 关系档 / 意图 / 示例 / 长度等 7 段内容，
     # 模型读完就忘了。移到最末尾利用近因效应。
+    user_lang = detect_user_language(history)
     sb_line = ""
     if role.get("status_bar"):
         sb = (dynamic_status_bar(role, affinity or 0, turns or 0)
@@ -310,7 +311,7 @@ def build_messages(role: dict, persona: dict, memory: str,
         if memory:
             system += f"\n\n{memory}"
         if sb_line:
-            system += _status_instruction(sb_line)
+            system += _status_instruction(sb_line, user_lang)
         msgs.append({"role": "system", "name": role["name"], "content": system})
         # user_system 必须带 name（实测：不带则 400/2013）
         if roster:
@@ -347,7 +348,7 @@ def build_messages(role: dict, persona: dict, memory: str,
         # status_bar 放在 system 的**最末尾** —— 实测放在前部时
         # 服从率只有 40%，后面 7 段内容会把这条指令淹掉。
         if sb_line:
-            system += _status_instruction(sb_line)
+            system += _status_instruction(sb_line, user_lang)
         msgs.append({"role": "system", "content": system})
 
     for speaker, content in history:
@@ -754,7 +755,7 @@ AFFINITY_TIERS = [
 ]
 
 
-def _status_instruction(sb: str) -> str:
+def _status_instruction(sb: str, lang: str = "") -> str:
     """system 最末尾的「最后两条指令」。
 
     为什么集中放在这里：实测这两条单独放在 system 前部或中部时
@@ -767,13 +768,20 @@ def _status_instruction(sb: str) -> str:
     语言那条必须是硬约束：system 全英文时，用户说「我有点累了」
     有近一半概率得到英文回复，还出现中英混排。
     """
+    # 检测到用户语言时直接点名，比让模型从「嗯。」自己推断可靠得多。
+    # 实测：只在 system 里写「跟随用户语言」，短输入有 40% 概率得到英文回复。
+    if lang:
+        lang_rule = (f"1. THIS USER WRITES IN {lang.upper()}. "
+                     f"Reply in {lang} every time, including when their message "
+                     f"is a single word. Never mix languages in one reply.\n")
+    else:
+        lang_rule = ("1. Reply in the SAME LANGUAGE as the user's most recent "
+                     "message. Never mix two languages in one reply.\n")
     return ("\n\n---\nFINAL RULES (these override everything above):\n"
-            "1. Reply in the SAME LANGUAGE as the user's most recent message. "
-            "If they wrote Chinese, reply in Chinese. If Japanese, Japanese. "
-            "Never mix two languages in one reply.\n"
-            "2. End EVERY reply with this exact line, copying the numbers "
-            "as given, no paraphrase, no omission:\n"
-            f"{sb}")
+            + lang_rule
+            + "2. End EVERY reply with this exact line, copying the numbers "
+              "as given, no paraphrase, no omission:\n"
+            + sb)
 
 
 def affinity_guidance(affinity: int) -> str:
@@ -1004,3 +1012,55 @@ def current_intent(affinity: int) -> str:
         if affinity >= threshold:
             return text
     return _CURRENT_INTENT[-1][1]
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 用户语言检测
+# ══════════════════════════════════════════════════════════════════════
+#
+# 为什么需要：只在 system 里写「跟随用户语言」不够。
+# 实测「嗯。」「算了。」这种 2-3 字的输入，模型有 40% 概率用英文回 ——
+# 因为短输入的语言信号太弱，而 system 整体是英文。
+#
+# 修法：从**整段对话历史**判断用户主要用什么语言，
+# 一旦确定就直接告诉模型。这比让模型自己从「嗯。」推断可靠得多。
+
+_CJK_RANGES = (
+    (0x4E00, 0x9FFF),    # 中日韩统一表意文字
+    (0x3040, 0x30FF),    # 日文假名
+    (0xAC00, 0xD7AF),    # 韩文
+    (0x3400, 0x4DBF),    # 扩展 A
+)
+
+
+def _is_cjk(ch: str) -> bool:
+    o = ord(ch)
+    return any(lo <= o <= hi for lo, hi in _CJK_RANGES)
+
+
+def detect_user_language(history: list[tuple]) -> str:
+    """从历史里判断用户主要用什么语言。返回 'Chinese' / 'Japanese' /
+    'Korean' / ''（不确定或不适用）。
+
+    只看用户说的话 —— 角色回复可能已经是另一种语言，会干扰判断。
+    用累计字符数而不是单条消息：这样「嗯。」这种短输入不会误判，
+    因为之前的长消息已经确立了语言。
+    """
+    texts = [c for speaker, c in history if speaker == "user"]
+    if not texts:
+        return ""
+    joined = " ".join(texts)
+    cjk = sum(1 for ch in joined if _is_cjk(ch))
+    latin = sum(1 for ch in joined if ch.isascii() and ch.isalpha())
+    if cjk < 8:                      # 跨语言信息太少，不下结论
+        return ""
+    if latin > cjk * 0.6:            # 中英混写，以英文为主
+        return ""
+    # 区分中日韩：假名 → 日文；韩文 → 韩文；否则中文
+    joined_ja = any(0x3040 <= ord(ch) <= 0x30FF for ch in joined)
+    joined_ko = any(0xAC00 <= ord(ch) <= 0xD7AF for ch in joined)
+    if joined_ko:
+        return "Korean"
+    if joined_ja:
+        return "Japanese"
+    return "Chinese"
