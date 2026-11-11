@@ -124,7 +124,13 @@ BASE_SYSTEM = (
     "Withholding lands harder than giving. Let a silence sit instead of "
     "filling it. Raise a question you do not answer.\n"
     "Never summarise the relationship or announce your feelings as a status "
-    "report — show them through what you notice and what you refuse to say."
+    "report — show them through what you notice and what you refuse to say.\n"
+    # 语言跟随。实测问题：system 全英文时，用户说「我有点累了」模型
+    # 有约一半概率用英文回，还出现中英混排（中文动作 + 英文对白）。
+    # 这条必须显式写，模型不会自己推断。
+    "Write in the same language as the user's most recent message. "
+    "If they write Chinese, answer in Chinese; Japanese, Japanese; "
+    "and so on. Never mix two languages inside one reply."
 )
 
 # 示例对话 —— 实测证明这是控制输出长度最有效的杠杆。
@@ -272,14 +278,15 @@ def build_messages(role: dict, persona: dict, memory: str,
         system += f"\n\nPersonality: {role['personality']}"
     if role.get("background"):
         system += f"\n\nBackground: {role['background']}"
+    # status_bar 先算出来，但**不在这里拼** —— 见函数末尾。
+    # 实测：放在 system 前部时服从率只有 40%（10 次采样里 6 次漏掉），
+    # 因为后面还有 Style / 关系档 / 意图 / 示例 / 长度等 7 段内容，
+    # 模型读完就忘了。移到最末尾利用近因效应。
+    sb_line = ""
     if role.get("status_bar"):
-        # 动态生成：好感度与对话轮次会改变状态栏。
-        # 写死的字符串会和 [Relationship] 段冲突（比如同时出现
-        # 「Affection: 5%」和「DEVOTED」），模型只能折中，回复就显得假。
         sb = (dynamic_status_bar(role, affinity or 0, turns or 0)
               if affinity is not None else role["status_bar"])
-        system += (f"\n\nAppend this status bar at the end of every reply, "
-                   f"copying the numbers exactly as given:\n{sb}")
+        sb_line = sb
     system += f"\n\nStyle: {cfg['style']}\n{BASE_SYSTEM}"
 
     # 关系状态。传 None 表示调用方没有好感度信息（如回访生成），
@@ -308,6 +315,8 @@ def build_messages(role: dict, persona: dict, memory: str,
     if native:
         if memory:
             system += f"\n\n{memory}"
+        if sb_line:
+            system += _status_instruction(sb_line)
         msgs.append({"role": "system", "name": role["name"], "content": system})
         # user_system 必须带 name（实测：不带则 400/2013）
         if roster:
@@ -341,6 +350,10 @@ def build_messages(role: dict, persona: dict, memory: str,
             )
         if memory:
             system += f"\n\n{memory}"
+        # status_bar 放在 system 的**最末尾** —— 实测放在前部时
+        # 服从率只有 40%，后面 7 段内容会把这条指令淹掉。
+        if sb_line:
+            system += _status_instruction(sb_line)
         msgs.append({"role": "system", "content": system})
 
     for speaker, content in history:
@@ -745,6 +758,18 @@ AFFINITY_TIERS = [
         "clipped, formal, and entirely without warmth. You do not soften at "
         "the end of a reply. You may refuse to engage at all.")),
 ]
+
+
+def _status_instruction(sb: str) -> str:
+    """status bar 的指令段，放在 system 最末尾。
+
+    格式要求写得很硬：要求原样复制数字。
+    实测原因：只写「Append this status bar」时，模型经常自己编数字
+    （Affection 写成 5% 或干脆省略），必须强调 copying the numbers
+    exactly as given。
+    """
+    return (f"\n\n---\nEnd EVERY reply with this exact line, "
+            f"copying the numbers as given, no paraphrase:\n{sb}")
 
 
 def affinity_guidance(affinity: int) -> str:
