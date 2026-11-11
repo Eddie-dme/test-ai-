@@ -310,8 +310,8 @@ def build_messages(role: dict, persona: dict, memory: str,
     if native:
         if memory:
             system += f"\n\n{memory}"
-        if sb_line:
-            system += _status_instruction(sb_line, user_lang)
+        if user_lang or True:
+            system += _status_instruction(user_lang)
         msgs.append({"role": "system", "name": role["name"], "content": system})
         # user_system 必须带 name（实测：不带则 400/2013）
         if roster:
@@ -347,8 +347,8 @@ def build_messages(role: dict, persona: dict, memory: str,
             system += f"\n\n{memory}"
         # status_bar 放在 system 的**最末尾** —— 实测放在前部时
         # 服从率只有 40%，后面 7 段内容会把这条指令淹掉。
-        if sb_line:
-            system += _status_instruction(sb_line, user_lang)
+        if user_lang or True:
+            system += _status_instruction(user_lang)
         msgs.append({"role": "system", "content": system})
 
     for speaker, content in history:
@@ -755,7 +755,7 @@ AFFINITY_TIERS = [
 ]
 
 
-def _status_instruction(sb: str, lang: str = "") -> str:
+def _status_instruction(lang: str = "") -> str:
     """system 最末尾的「最后两条指令」。
 
     为什么集中放在这里：实测这两条单独放在 system 前部或中部时
@@ -770,18 +770,17 @@ def _status_instruction(sb: str, lang: str = "") -> str:
     """
     # 检测到用户语言时直接点名，比让模型从「嗯。」自己推断可靠得多。
     # 实测：只在 system 里写「跟随用户语言」，短输入有 40% 概率得到英文回复。
+    #
+    # 注意这里只管语言。status_bar 已经改由服务端追加 ——
+    # 展示用的字符串不需要模型「创作」，只需要确定性。
     if lang:
-        lang_rule = (f"1. THIS USER WRITES IN {lang.upper()}. "
-                     f"Reply in {lang} every time, including when their message "
-                     f"is a single word. Never mix languages in one reply.\n")
+        rule = (f"THIS USER WRITES IN {lang.upper()}. "
+                f"Reply in {lang} every time, including when their message "
+                f"is a single word. Never mix languages in one reply.")
     else:
-        lang_rule = ("1. Reply in the SAME LANGUAGE as the user's most recent "
-                     "message. Never mix two languages in one reply.\n")
-    return ("\n\n---\nFINAL RULES (these override everything above):\n"
-            + lang_rule
-            + "2. End EVERY reply with this exact line, copying the numbers "
-              "as given, no paraphrase, no omission:\n"
-            + sb)
+        rule = ("Reply in the SAME LANGUAGE as the user's most recent "
+                "message. Never mix two languages in one reply.")
+    return "\n\n---\nFINAL RULE (overrides everything above):\n" + rule
 
 
 def affinity_guidance(affinity: int) -> str:
@@ -1064,3 +1063,23 @@ def detect_user_language(history: list[tuple]) -> str:
     if joined_ja:
         return "Japanese"
     return "Chinese"
+
+
+def strip_status_bar(text: str) -> str:
+    """移除消息末尾的 status bar。
+
+    为什么需要：status_bar 是**展示用**的，不应该进对话历史。
+    如果每轮都带，40 条历史里会有 40 行状态栏（约 2000 字符），
+    纯粹浪费 token，还会让模型以为这是个需要模仿的格式。
+    """
+    if not text:
+        return text
+    lines = text.rstrip().split("\n")
+    if not lines:
+        return text
+    last = lines[-1]
+    # status bar 的特征：含 emoji 且用 | 分隔 2-3 段
+    if ("|" in last and any(ord(ch) > 0x1F000 for ch in last)
+            and "📍" in last or "🕯️" in last or "⚔️" in last):
+        return "\n".join(lines[:-1]).rstrip()
+    return text

@@ -2247,13 +2247,14 @@ class Handler(BaseHTTPRequestHandler):
         def _on_usage(rec: dict) -> None:
             _usage.update(rec)
 
+        # 在 try 之前算好：后面追加 status bar 时也要用，
+        # 若放在 try 内，chat_stream 抛异常会导致变量未定义。
+        _aff = store.get_affinity(u["id"], chatroom["role_id"])
+        # 轮次驱动虚拟时间（深夜→黎明）与角色状态（吸血鬼的渴、幽灵的实体度）。
+        # 用消息数而不是 history 长度 —— history 会被截断到 40 条。
+        _turns = store.count_messages(cid, speaker="user")
+
         try:
-            # affinity 来自 role_affinity（跨会话合并），决定角色的
-            # 说话距离感。传进去之后模型才知道「你们熟到什么程度」。
-            _aff = store.get_affinity(u["id"], chatroom["role_id"])
-            # 轮次驱动虚拟时间（深夜→黎明）与角色状态（吸血鬼的渴、幽灵的实体度）。
-            # 用 chatroom 的消息数而不是 history 长度 —— history 会被截断到 40 条。
-            _turns = store.count_messages(cid, speaker="user")
             for piece in llm.chat_stream(role, persona, memory, history,
                                          chatroom["chat_mode"],
                                          on_usage=_on_usage, affinity=_aff,
@@ -2298,6 +2299,23 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         full = "".join(acc)
+
+        # status bar 由服务端追加，不依赖模型生成。
+        #
+        # 为什么：classic 档 temperature=1.0，任何 prompt 指令都有波动。
+        # 实测把指令放到 system 最末尾（近因效应）+ 显式写
+        # 「copying the numbers as given」后，服从率仍在 40-90% 之间跳，
+        # 用户会看到状态栏有时有时无。
+        #
+        # 这是典型的「prompt 解不了的用工程解」：展示用的字符串
+        # 本来就不该让模型生成 —— 它不需要 creativity，只需要确定性。
+        if full and role.get("status_bar"):
+            sb = llm.dynamic_status_bar(role, _aff, _turns)
+            # 模型偶尔自己生成了（概率不低），此时不再重复追加
+            if sb.split("|")[0].strip() not in full:
+                emit({"event": "token", "text": "\n\n" + sb})
+                full = full.rstrip() + "\n\n" + sb
+
         mid = None
         if full:
             mid = store.add_message(cid, "assistant", full)

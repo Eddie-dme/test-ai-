@@ -24,6 +24,7 @@ import sys
 import time
 
 import auth
+import llm
 from pathlib import Path
 from typing import Any
 
@@ -462,6 +463,28 @@ CREATE INDEX IF NOT EXISTS idx_leads_created ON leads(created_at DESC);
 """
 
 
+# 只在 seed_data 里、不进 roles 表的字段。
+# 这些是「怎么渲染」的配置，不是角色内容，没必要存库。
+_SEED_ROLE_FIELDS = ("status_dynamic", "status_affinity_word")
+
+
+def _merge_seed_role_fields(role: dict) -> dict:
+    """从 seed_data 里按名字补上非内容字段。
+
+    UGC 角色（用户自建）在 seed_data 里查不到，返回空 dict，
+    即回落到静态 status_bar —— 这是正确的降级。
+    """
+    try:
+        from seed_data import ROLES as _SEED_ROLES
+    except Exception:
+        return {}
+    name = role.get("name")
+    for sr in _SEED_ROLES:
+        if sr.get("name") == name:
+            return {k: sr[k] for k in _SEED_ROLE_FIELDS if k in sr}
+    return {}
+
+
 def now() -> float:
     return time.time()
 
@@ -896,6 +919,11 @@ class Store:
             return None
         d = dict(r)
         d["tags"] = json.loads(d["tags"] or "[]")
+        # status_dynamic 是「哪些字段该动态生成」的声明，只存在于
+        # seed_data 的 Python 对象里，没有存进 roles 表（那是内容字段）。
+        # 不合并的话，服务端拿到的 role 没有这个键，
+        # dynamic_status_bar 会回落静态字符串 —— 而那正是要修的问题。
+        d.update(_merge_seed_role_fields(d))
         return d
 
     # ---- chatroom ---------------------------------------------------
@@ -1057,10 +1085,21 @@ class Store:
         return cur.lastrowid
 
     def history_for_llm(self, chatroom_id: int, max_turns: int = 40) -> list[tuple]:
+        """喂给模型的对话历史。
+
+        **剥掉 status bar** —— 那是展示用的，每轮都带会浪费约 5% 的
+        input token，还会让模型误以为需要模仿这个格式。
+        """
         rows = self.c.execute(
             "SELECT speaker, content FROM messages WHERE chatroom_id=?"
             " ORDER BY id DESC LIMIT ?", (chatroom_id, max_turns)).fetchall()
-        return [(r["speaker"], r["content"]) for r in reversed(rows)]
+        out = []
+        for r in reversed(rows):
+            c = r["content"]
+            if r["speaker"] == "assistant":
+                c = llm.strip_status_bar(c)
+            out.append((r["speaker"], c))
+        return out
 
     # ---- ad ---------------------------------------------------------
     def ad_state(self, user_id: int) -> list[dict]:
